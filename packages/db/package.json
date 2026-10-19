@@ -1,0 +1,23 @@
+{
+  "name": "@entradas/db",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Esquema Prisma, migraciones y cliente generado, compartidos entre api y worker",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:check": "prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code"
+  },
+  "devDependencies": {
+    "dotenv": "18.0.8",
+    "prisma": "7.10.1"
+  },
+  "dependencies": {
+    "@prisma/client": "7.10.1"
+  }
+}
