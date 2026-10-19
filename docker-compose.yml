@@ -1,0 +1,51 @@
+# Infraestructura local (doc 07 §8). La API, el Worker y la web corren fuera
+# de Docker con `npm run dev`. Los valores por defecto coinciden con .env.example.
+name: entradas
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-entradas}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-entradas}
+      POSTGRES_DB: ${POSTGRES_DB:-entradas}
+      TZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    # AOF activado, igual que en Fly (doc 07): los jobs sobreviven a un reinicio.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:
+    # Captura los emails en local sin gastar la cuota de Resend.
+    image: axllent/mailpit
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # Interfaz web
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres-data:
+  redis-data:
