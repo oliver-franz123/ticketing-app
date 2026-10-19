@@ -13,12 +13,12 @@ flowchart TB
     end
 
     subgraph Vercel["Vercel · CDN global"]
-        FE["Next.js<br/>app.&lt;dominio&gt;"]
+        FE["Next.js<br/>&lt;proyecto&gt;.vercel.app<br/>(opcional: app.&lt;dominio&gt;)"]
     end
 
     subgraph Fly["Fly.io · región gru (São Paulo) · red privada 6PN"]
         direction TB
-        LB["Proxy Fly (TLS)<br/>api.&lt;dominio&gt;"]
+        LB["Proxy Fly (TLS)<br/>&lt;app-api&gt;.fly.dev<br/>(opcional: api.&lt;dominio&gt;)"]
         API1["api · máquina 1<br/>shared-cpu-1x"]
         API2["api · máquina 2<br/>(para demo multi-instancia)"]
         WK["worker · máquina 1<br/>sin puerto público"]
@@ -32,7 +32,7 @@ flowchart TB
     end
 
     STR["Stripe (modo test)<br/>OPCIONAL"]
-    RES["Resend<br/>dominio verificado SPF/DKIM"]
+    RES["Resend<br/>(dominio verificado: opcional)"]
     GH["GitHub Actions<br/>CI + deploy"]
 
     M -- HTTPS --> FE
@@ -103,15 +103,33 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 
 **Plan C (contingencia el día de la demo):** todo en una laptop con Docker. Los pagos usan el simulador (módulo de la API) con `API_PUBLIC_URL=http://localhost:3000`: el webhook va por HTTP a la propia API local, sin túneles ni cuentas externas. `stripe listen` solo hace falta si además se demuestra el adaptador opcional de Stripe. Debe estar ensayado.
 
-## 5. Dominio y DNS (decidido: el equipo tiene o comprará un dominio)
+## 5. URLs y dominio (el dominio propio es opcional)
+
+**Por defecto se usan las URL gratuitas** que dan las plataformas, sin comprar nada:
+
+| Servicio | URL por defecto | Para |
+|---|---|---|
+| Frontend | `https://<proyecto>.vercel.app` | Next.js en Vercel |
+| API + WebSocket | `https://<app-api>.fly.dev` (`wss://` para el WS) | Máquinas `api` en Fly, con TLS incluido |
+
+**Variante opcional, con dominio propio:**
 
 | Registro | Apunta a | Para |
 |---|---|---|
 | `app.<dominio>` | Vercel (CNAME) | Frontend |
 | `api.<dominio>` | Fly (`fly certs add api.<dominio>`) | API + WebSocket |
-| TXT/MX/CNAME de Resend (SPF, DKIM, DMARC) | Resend | Que los emails **no caigan en spam** |
+| TXT/MX/CNAME de Resend (SPF, DKIM, DMARC) | Resend | Enviar a cualquier destinatario y que los emails **no caigan en spam** |
 
-Usar **subdominios del mismo dominio** simplifica CORS y, si en el futuro se usan cookies, que sean *same-site*.
+- Con las URL gratuitas, el frontend y la API quedan en **sitios distintos** (`vercel.app` y `fly.dev`). No es un problema: CORS se configura con `CORS_ORIGINS` y el JWT viaja en la cabecera `Authorization`, no en cookies. Con dominio propio, los subdominios del mismo dominio permitirían cookies *same-site* en el futuro (ADR-0009).
+- Cambiar de una variante a la otra es **solo configuración**: `CORS_ORIGINS`, `API_PUBLIC_URL`, `NEXT_PUBLIC_API_URL` y `NEXT_PUBLIC_WS_URL`.
+
+### Riesgo: el email podría exigir un dominio verificado
+
+- **Riesgo:** sin dominio propio verificado, el proveedor de email (Resend) podría permitir enviar **solo a la dirección de la cuenta** (o desde una dirección de prueba), no a cualquier destinatario. Verificarlo en su documentación actual al configurar la cuenta. El comprador de la demo no recibiría su entrada por email.
+- **Mitigación:**
+  - **En desarrollo:** Mailpit (doc 07 §8). No usa Resend ni requiere dominio.
+  - **En la demo:** enviar solo a correos del equipo (los compradores de la demo son cuentas del equipo), **o** comprar un dominio barato y verificarlo en Resend (SPF/DKIM) antes de la semana 4.
+  - En cualquier caso, la entrada se ve en "Mis entradas" aunque el email no llegue: el email no es parte de la correctitud.
 
 ## 6. Variables de entorno
 
@@ -131,16 +149,16 @@ Usar **subdominios del mismo dominio** simplifica CORS y, si en el futuro se usa
 | `STRIPE_SECRET_KEY` | api | `sk_test_...` (**nunca** `sk_live_`; la API se niega a arrancar si detecta `live`) | ✅ |
 | `STRIPE_WEBHOOK_SECRET` | api | `whsec_...` | ✅ |
 | `SIMULADOR_HABILITADO` | api | `true` en local y demo: monta el módulo `SimuladorPagos`. Con un proveedor real, `false` | No |
-| `API_PUBLIC_URL` | api | `https://api.<dominio>` (local: `http://localhost:3000`). El simulador envía el webhook a esta URL | No |
+| `API_PUBLIC_URL` | api | `https://<app-api>.fly.dev` (opcional: `https://api.<dominio>`; local: `http://localhost:3000`). El simulador envía el webhook a esta URL | No |
 | `SIMULADOR_WEBHOOK_SECRET` | api | Secreto de la firma HMAC-SHA256 del simulador (`t=<ts>,v1=…` sobre `<ts>.<rawBody>`) | ✅ |
 | `RESEND_API_KEY` | worker | `re_...` | ✅ |
-| `EMAIL_FROM` | worker | `Entradas <entradas@<dominio>>` | No |
-| `CORS_ORIGINS` | api | `https://app.<dominio>` | No |
+| `EMAIL_FROM` | worker | Con dominio verificado: `Entradas <entradas@<dominio>>`. Sin dominio: la dirección de prueba que permita Resend (solo envía a correos del equipo, ver §5) | No |
+| `CORS_ORIGINS` | api | `https://<proyecto>.vercel.app` (opcional: `https://app.<dominio>`) | No |
 | `RATE_LIMIT_RESERVAS_IP` | api | `30` reservas/min por IP; **≥ `100` en el entorno de demo** (la carrera sale de una sola IP) | No |
 | `RESERVA_TTL_SEGUNDOS` | api | `300` (en tests: `5`) | No |
 | `TZ_DISPLAY` | api, worker, frontend | `America/La_Paz` | No |
-| `NEXT_PUBLIC_API_URL` | frontend | `https://api.<dominio>` | No |
-| `NEXT_PUBLIC_WS_URL` | frontend | `wss://api.<dominio>` | No |
+| `NEXT_PUBLIC_API_URL` | frontend | `https://<app-api>.fly.dev` (opcional: `https://api.<dominio>`) | No |
+| `NEXT_PUBLIC_WS_URL` | frontend | `wss://<app-api>.fly.dev` (opcional: `wss://api.<dominio>`) | No |
 
 Reglas: los secretos van en `fly secrets set` / Vercel Env / GitHub Secrets, **nunca** en el repo. Se versiona un `.env.example` sin valores. El servidor corre con `TZ=UTC`.
 

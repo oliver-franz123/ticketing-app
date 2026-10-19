@@ -118,6 +118,7 @@ gantt
 | La concurrencia "funciona en local" pero no en el despliegue | Baja | Alto | `carrera.js` contra Fly desde la semana 2 |
 | Un integrante se enferma o abandona | Media | Alto | Slices verticales completos (nada queda a medias en capas). Revisión cruzada para que otro sepa continuar |
 | La cuota de Resend (100/día) se agota en los ensayos | Media | Bajo | Mailpit en local y Resend solo en el entorno desplegado. Pocos emails reales |
+| Sin dominio propio verificado, el proveedor de email (Resend) podría permitir enviar solo a la dirección de la cuenta, no a cualquier destinatario | Media | Medio | En desarrollo, Mailpit. Para la demo, enviar solo a correos del equipo o comprar un dominio barato y verificarlo antes de la semana 4. La entrada se ve igual en "Mis entradas" (doc 07 §5) |
 | El mapa es lento en celulares de gama baja | Media | Medio | Canvas/SVG simple. Probar en el celular más viejo del equipo en la semana 3 |
 | Stripe (opcional) no permite abrir la cuenta de test desde Bolivia, o sus webhooks no llegan en local | Media | Bajo | El simulador es el proveedor principal y la demo no depende de Stripe. Si se usa Stripe: prueba T11 en la semana 1 y `stripe listen` en local |
 | Alcance demasiado grande | Alta | Alto | Plan de recorte (abajo) |
