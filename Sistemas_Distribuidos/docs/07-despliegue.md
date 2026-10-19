@@ -13,16 +13,17 @@ flowchart TB
     end
 
     subgraph Vercel["Vercel · CDN global"]
-        FE["Next.js<br/>app.&lt;dominio&gt;"]
+        FE["Next.js<br/>&lt;proyecto&gt;.vercel.app<br/>(opcional: app.&lt;dominio&gt;)"]
     end
 
     subgraph Fly["Fly.io · región gru (São Paulo) · red privada 6PN"]
         direction TB
-        LB["Proxy Fly (TLS)<br/>api.&lt;dominio&gt;"]
+        LB["Proxy Fly (TLS)<br/>&lt;app-api&gt;.fly.dev<br/>(opcional: api.&lt;dominio&gt;)"]
         API1["api · máquina 1<br/>shared-cpu-1x"]
         API2["api · máquina 2<br/>(para demo multi-instancia)"]
         WK["worker · máquina 1<br/>sin puerto público"]
         RDS[("redis · máquina + volumen<br/>AOF activado<br/>solo red privada")]
+        SIM["Simulador de pagos<br/>módulo SimuladorPagos dentro<br/>de la API NestJS (no es otra máquina)"]
     end
 
     subgraph Supabase["Supabase · sa-east-1 (São Paulo)"]
@@ -30,8 +31,8 @@ flowchart TB
         PG[("PostgreSQL")]
     end
 
-    STR["Stripe (modo test)"]
-    RES["Resend<br/>dominio verificado SPF/DKIM"]
+    STR["Stripe (modo test)<br/>OPCIONAL"]
+    RES["Resend<br/>(dominio verificado: opcional)"]
     GH["GitHub Actions<br/>CI + deploy"]
 
     M -- HTTPS --> FE
@@ -41,10 +42,13 @@ flowchart TB
     API1 & API2 -- "redis.internal" --> RDS
     WK -- "redis.internal" --> RDS
     API1 & API2 & WK -- "TLS · puerto 6543" --> POOL --> PG
-    STR -- "webhook HTTPS" --> LB
+    API1 & API2 -. "contiene" .- SIM
+    SIM -- "webhook HTTPS real<br/>(API_PUBLIC_URL)" --> LB
+    STR -. "webhook HTTPS (opcional)" .-> LB
     WK -- "API HTTPS" --> RES
     GH -- "flyctl deploy" --> Fly
     GH -. "integración Git" .-> Vercel
+    style STR stroke-dasharray: 5 5
 ```
 
 ## 2. Regiones más cercanas a Bolivia (verificado)
@@ -75,7 +79,8 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 | **Upstash Redis** | Free | 256 MB, **500K comandos/mes**, 10 GB de ancho de banda | **BullMQ consulta Redis constantemente aunque no haya jobs** (lo advierte la doc de Upstash). Hay usuarios que agotaron la cuota en reposo. **No apto** para BullMQ en el plan gratis |
 | **Resend** | Free | **3.000 emails/mes, máx. 100/día**, 3 dominios, 30 días de logs | 100/día: en los ensayos de demo **no** usen emails reales masivos (usar Mailpit en local) |
 | **SendGrid** | — | **Retiró el plan gratis en 2025.** Ahora es una prueba de 60 días | Descartado |
-| **Stripe** | Modo test | Gratis, sin activar la cuenta | Bolivia **no** figura entre los países con cuenta Stripe. Solo modo test. Ver doc 13 |
+| **Simulador de pagos** | Propio | Módulo dentro de la API NestJS: no es otro servicio ni otra máquina, **sin costo extra** | Es el proveedor principal de la demo (ADR-0015) |
+| **Stripe** (opcional) | Modo test | Solo si se puede abrir la cuenta de test desde Bolivia (prueba T11 de la semana 1) | Bolivia **no** figura entre los países con cuenta Stripe y el registro pide un país soportado. Nunca modo live. Ver doc 13 |
 
 ## 4. Elección final
 
@@ -96,17 +101,35 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 
 **Plan B (Railway):** misma arquitectura, región US East. Interfaz más simple y plantilla de Redis. Costo fijo de US$5 con US$5 de uso incluido. Se paga con latencia mayor desde Bolivia.
 
-**Plan C (contingencia el día de la demo):** todo en una laptop con Docker + `stripe listen` para los webhooks. Debe estar ensayado.
+**Plan C (contingencia el día de la demo):** todo en una laptop con Docker. Los pagos usan el simulador (módulo de la API) con `API_PUBLIC_URL=http://localhost:3000`: el webhook va por HTTP a la propia API local, sin túneles ni cuentas externas. `stripe listen` solo hace falta si además se demuestra el adaptador opcional de Stripe. Debe estar ensayado.
 
-## 5. Dominio y DNS (decidido: el equipo tiene o comprará un dominio)
+## 5. URLs y dominio (el dominio propio es opcional)
+
+**Por defecto se usan las URL gratuitas** que dan las plataformas, sin comprar nada:
+
+| Servicio | URL por defecto | Para |
+|---|---|---|
+| Frontend | `https://<proyecto>.vercel.app` | Next.js en Vercel |
+| API + WebSocket | `https://<app-api>.fly.dev` (`wss://` para el WS) | Máquinas `api` en Fly, con TLS incluido |
+
+**Variante opcional, con dominio propio:**
 
 | Registro | Apunta a | Para |
 |---|---|---|
 | `app.<dominio>` | Vercel (CNAME) | Frontend |
 | `api.<dominio>` | Fly (`fly certs add api.<dominio>`) | API + WebSocket |
-| TXT/MX/CNAME de Resend (SPF, DKIM, DMARC) | Resend | Que los emails **no caigan en spam** |
+| TXT/MX/CNAME de Resend (SPF, DKIM, DMARC) | Resend | Enviar a cualquier destinatario y que los emails **no caigan en spam** |
 
-Usar **subdominios del mismo dominio** simplifica CORS y, si en el futuro se usan cookies, que sean *same-site*.
+- Con las URL gratuitas, el frontend y la API quedan en **sitios distintos** (`vercel.app` y `fly.dev`). No es un problema: CORS se configura con `CORS_ORIGINS` y el JWT viaja en la cabecera `Authorization`, no en cookies. Con dominio propio, los subdominios del mismo dominio permitirían cookies *same-site* en el futuro (ADR-0009).
+- Cambiar de una variante a la otra es **solo configuración**: `CORS_ORIGINS`, `API_PUBLIC_URL`, `NEXT_PUBLIC_API_URL` y `NEXT_PUBLIC_WS_URL`.
+
+### Riesgo: el email podría exigir un dominio verificado
+
+- **Riesgo:** sin dominio propio verificado, el proveedor de email (Resend) podría permitir enviar **solo a la dirección de la cuenta** (o desde una dirección de prueba), no a cualquier destinatario. Verificarlo en su documentación actual al configurar la cuenta. El comprador de la demo no recibiría su entrada por email.
+- **Mitigación:**
+  - **En desarrollo:** Mailpit (doc 07 §8). No usa Resend ni requiere dominio.
+  - **En la demo:** enviar solo a correos del equipo (los compradores de la demo son cuentas del equipo), **o** comprar un dominio barato y verificarlo en Resend (SPF/DKIM) antes de la semana 4.
+  - En cualquier caso, la entrada se ve en "Mis entradas" aunque el email no llegue: el email no es parte de la correctitud.
 
 ## 6. Variables de entorno
 
@@ -121,17 +144,21 @@ Usar **subdominios del mismo dominio** simplifica CORS y, si en el futuro se usa
 | `JWT_EXPIRES_IN` | api | `60m` | No |
 | `QR_SIGNING_PRIVATE_KEY` | **solo worker** | Ed25519 en PEM | ✅ |
 | `QR_SIGNING_PUBLIC_KEY` | api | Ed25519 en PEM | No |
-| `PAYMENT_PROVIDER` | api | `stripe` \| `simulador` | No |
+| `PAYMENT_PROVIDERS` | api | Adaptadores habilitados, p. ej. `simulador,stripe` (valores: `simulador` \| `stripe` \| `qr`) | No |
+| `PAYMENT_PROVIDER_DEFAULT` | api | `simulador`: el proveedor de los pagos nuevos (`simulador` \| `stripe` \| `qr`). Debe estar incluido en `PAYMENT_PROVIDERS`, si no la API no arranca. Cada proveedor habilitado recibe sus webhooks en `POST /webhooks/pagos/:proveedor` | No |
 | `STRIPE_SECRET_KEY` | api | `sk_test_...` (**nunca** `sk_live_`; la API se niega a arrancar si detecta `live`) | ✅ |
 | `STRIPE_WEBHOOK_SECRET` | api | `whsec_...` | ✅ |
-| `SIMULADOR_WEBHOOK_SECRET` | api | HMAC del simulador | ✅ |
+| `SIMULADOR_HABILITADO` | api | `true` en local y demo: monta el módulo `SimuladorPagos`. Con un proveedor real, `false` | No |
+| `API_PUBLIC_URL` | api | `https://<app-api>.fly.dev` (opcional: `https://api.<dominio>`; local: `http://localhost:3000`). El simulador envía el webhook a esta URL | No |
+| `SIMULADOR_WEBHOOK_SECRET` | api | Secreto de la firma HMAC-SHA256 del simulador (`t=<ts>,v1=…` sobre `<ts>.<rawBody>`) | ✅ |
 | `RESEND_API_KEY` | worker | `re_...` | ✅ |
-| `EMAIL_FROM` | worker | `Entradas <entradas@<dominio>>` | No |
-| `CORS_ORIGINS` | api | `https://app.<dominio>` | No |
+| `EMAIL_FROM` | worker | Con dominio verificado: `Entradas <entradas@<dominio>>`. Sin dominio: la dirección de prueba que permita Resend (solo envía a correos del equipo, ver §5) | No |
+| `CORS_ORIGINS` | api | `https://<proyecto>.vercel.app` (opcional: `https://app.<dominio>`) | No |
+| `RATE_LIMIT_RESERVAS_IP` | api | `30` reservas/min por IP; **≥ `100` en el entorno de demo** (la carrera sale de una sola IP) | No |
 | `RESERVA_TTL_SEGUNDOS` | api | `300` (en tests: `5`) | No |
 | `TZ_DISPLAY` | api, worker, frontend | `America/La_Paz` | No |
-| `NEXT_PUBLIC_API_URL` | frontend | `https://api.<dominio>` | No |
-| `NEXT_PUBLIC_WS_URL` | frontend | `wss://api.<dominio>` | No |
+| `NEXT_PUBLIC_API_URL` | frontend | `https://<app-api>.fly.dev` (opcional: `https://api.<dominio>`) | No |
+| `NEXT_PUBLIC_WS_URL` | frontend | `wss://<app-api>.fly.dev` (opcional: `wss://api.<dominio>`) | No |
 
 Reglas: los secretos van en `fly secrets set` / Vercel Env / GitHub Secrets, **nunca** en el repo. Se versiona un `.env.example` sin valores. El servidor corre con `TZ=UTC`.
 

@@ -14,12 +14,13 @@ Cada ADR documenta **una** decisión: el contexto, las opciones, la decisión to
 | [0005](0005-outbox-transaccional.md) | Outbox transaccional para encolar trabajos | Aceptado |
 | [0006](0006-comunicacion-hibrida-sin-graphql.md) | REST + WebSocket + cola. GraphQL descartado | Aceptado |
 | [0007](0007-socketio-reconexion-y-polling.md) | Socket.IO, solo websocket, con fallback a polling REST | Aceptado |
-| [0008](0008-pagos-adapter-strategy.md) | Pagos detrás de un puerto con 3 adaptadores | Aceptado |
+| [0008](0008-pagos-adapter-strategy.md) | Pagos detrás de un puerto con 3 adaptadores | Reemplazado parcialmente por ADR-0015 |
 | [0009](0009-auth-propia-jwt.md) | Auth propia con JWT en NestJS | Aceptado |
 | [0010](0010-dinero-centavos-y-fechas-utc.md) | Dinero en centavos BOB y fechas en UTC | Aceptado |
 | [0011](0011-qr-firmado-ed25519.md) | QR firmado con Ed25519 sin datos personales | Aceptado |
 | [0012](0012-despliegue-fly-gru-supabase.md) | Vercel + Fly.io gru + Supabase sa-east-1 + Redis en Fly + Resend | Aceptado |
 | [0013](0013-prisma-con-sql-explicito.md) | Prisma como ORM, con SQL explícito en las consultas críticas | Aceptado |
 | [0014](0014-modelo-geografico.md) | Departamento → ciudad → recinto para la expansión nacional | Aceptado |
+| [0015](0015-simulador-de-pagos-principal.md) | Simulador de pagos propio (módulo del backend) como proveedor principal; Stripe test opcional | Aceptado |
 
 Plantilla: [`plantilla.md`](plantilla.md)

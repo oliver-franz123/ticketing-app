@@ -36,7 +36,7 @@ Notación: **RF** funcional · **RNF** no funcional · **RN** regla de negocio. 
 | RF-32 | Reservar de 1 a 6 asientos de forma **atómica** (todos o ninguno). Se crea una orden PENDIENTE_PAGO que vence a los 5 min. | M |
 | RF-33 | Ver un contador regresivo de la reserva. | M |
 | RF-34 | Cancelar la reserva, que libera los asientos de inmediato. | S |
-| RF-35 | Iniciar el pago con el proveedor configurado (Stripe test o simulador). | M |
+| RF-35 | Iniciar el pago con el proveedor configurado (simulador por defecto). | M |
 | RF-36 | El pago se confirma **solo por webhook**, nunca porque el navegador "vuelva" de la página de pago. | M |
 | RF-37 | Ingresar NIT y razón social opcionales para una futura factura. | C |
 | RF-38 | Ver "Mis entradas" y descargar el PDF. | S |
@@ -69,7 +69,7 @@ Notación: **RF** funcional · **RNF** no funcional · **RN** regla de negocio. 
 | RNF-07 | **Expiración** | Una reserva vencida no bloquea una nueva reserva **en ningún momento** (expiración perezosa). El job la limpia en ≤ 30 s. | Test con reloj controlado |
 | RNF-08 | **Rendimiento móvil** | JS inicial de la página del mapa < 200 KB gzip. LCP < 2,5 s en 4G simulada. | Lighthouse (perfil "Slow 4G") |
 | RNF-09 | **Seguridad** | Contraseñas con argon2id. JWT con expiración ≤ 60 min. Webhooks con firma verificada. QR firmado con Ed25519. | Revisión de código + tests |
-| RNF-10 | **Rate limiting** | Reservas: máx. 10/min por usuario y 30/min por IP. Respuesta 429 con `Retry-After`. | Test de integración |
+| RNF-10 | **Rate limiting** | Reservas: máx. 10/min por usuario y, por IP, el valor de `RATE_LIMIT_RESERVAS_IP` (30/min por defecto; **≥ 100/min en el entorno de demo**, para que `carrera.js` no reciba 429). Respuesta 429 con `Retry-After`. | Test de integración |
 | RNF-11 | **Observabilidad** | Logs JSON con `requestId`. Métricas: reservas ok/conflicto, webhooks duplicados, tamaño de la cola, conexiones WS. | Endpoint `/metrics` + panel de demo |
 | RNF-12 | **Disponibilidad (demo)** | La API responde en < 2 s tras inactividad (sin "cold start" de 1 min). | Máquinas siempre encendidas en Fly |
 | RNF-13 | **Portabilidad** | Todo el sistema se levanta en local con Docker en < 5 min siguiendo el README. | Prueba de un integrante nuevo |

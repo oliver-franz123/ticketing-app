@@ -5,7 +5,7 @@
 | Término | Definición breve | Ejemplo en nuestro sistema |
 |---|---|---|
 | **ACID** | Atomicidad, Consistencia, Aislamiento y Durabilidad de una transacción | Reservar 3 asientos + crear la orden: o todo o nada |
-| **Adapter (patrón)** | Clase que traduce una interfaz externa a una propia | `StripeTestAdapter` implementa `ProveedorPago` |
+| **Adapter (patrón)** | Clase que traduce una interfaz externa a una propia | `SimuladorAdapter` implementa `ProveedorPago`. `StripeTestAdapter` (opcional) sería otro adaptador del mismo puerto |
 | **ADR** | *Architecture Decision Record*: registro corto de una decisión y su porqué | `docs/adr/0002-...md` |
 | **Al-menos-una-vez** | Garantía de entrega: el mensaje llega 1 o más veces | Webhooks y jobs de BullMQ |
 | **Argon2id** | Algoritmo de hash de contraseñas, lento a propósito y resistente a GPU | `usuarios.password_hash` |
@@ -50,7 +50,7 @@
 | **Strangler Fig** | Extraer partes de un sistema viejo de forma gradual | Plan para extraer Validación |
 | **Thundering herd (manada)** | Muchos clientes que actúan en el mismo instante | Apertura de la venta. Reconexión masiva |
 | **TTL** | *Time to live*: tiempo de vida antes de vencer | 5 min de reserva |
-| **Webhook** | Petición HTTP que un servicio externo envía para avisar de un evento | Stripe avisa "pago exitoso" |
+| **Webhook** | Petición HTTP que un servicio externo envía para avisar de un evento | El simulador de pagos avisa "pago exitoso" con `POST /webhooks/pagos/simulador`. Stripe (opcional) haría lo mismo en `/webhooks/pagos/stripe` |
 | **WebSocket** | Conexión bidireccional persistente sobre TCP | Mapa en vivo |
 
 ## 2. Errores comunes (y cómo los evitamos)

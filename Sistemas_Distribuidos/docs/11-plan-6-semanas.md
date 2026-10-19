@@ -39,7 +39,7 @@ gantt
     Expiración (perezosa + job)                 :s3c, 2026-11-02, 5d
     section Semana 4 · Asincronía
     Outbox + relay + Worker QR/PDF/email        :crit, s4a, 2026-11-09, 5d
-    Stripe test adapter                         :s4b, 2026-11-09, 5d
+    Stripe test adapter (opcional, si T11 OK)   :s4b, 2026-11-09, 5d
     Reconexión + polling + resync               :s4c, 2026-11-09, 5d
     section Semana 5 · Puerta + robustez
     Validador (cámara) + validación CAS         :s5a, 2026-11-16, 5d
@@ -52,13 +52,22 @@ gantt
 > Fechas de ejemplo (inicio el lunes 19/10/2026). Ajústenlas al calendario real de la materia.
 
 ### Semana 1 — Cimientos
-| Entregable | Responsable | Criterio de aceptación |
-|---|---|---|
-| Monorepo (`apps/api`, `apps/worker`, `apps/web`, `packages/shared`), Docker local (Postgres, Redis, Mailpit), README "levantar en 5 min" | C | Otro integrante lo levanta desde cero |
-| CI: lint + typecheck + tests con Postgres/Redis como servicios | C | Un PR con un test que falla no se puede mergear |
-| Cuentas de Fly, Supabase (`sa-east-1`), Vercel y Resend + dominio. **Verificar de nuevo los free tiers y medir el RTT** desde Cochabamba | C | `GET /health` responde desde `api.<dominio>` |
-| Esquema de BD y migraciones con todas las restricciones del doc 09. Semilla con los 9 departamentos y las ciudades de Cochabamba | A | Tests de restricciones: insertar 2 entradas válidas para un asiento **falla** |
-| Registro y login con JWT y guard de roles. Next.js con login y layout | B | A-01 y A-04 en verde |
+| # | Tarea | Resp. | Entregable (criterio de aceptación) | Depende de | Días |
+|---|---|---|---|---|---|
+| **T1** | **Monorepo (tarea bloqueante, el lunes):** `apps/api`, `apps/worker`, `apps/web`, `packages/shared` + Docker local (Postgres 16, Redis 7, Mailpit) + `.env.example` + README "levantar en 5 min" | C | Otro integrante clona y levanta todo desde cero siguiendo el README | — | L |
+| **T2** | CI: lint + typecheck + tests con Postgres y Redis como servicios, más protección de `main` | B | Un PR con un test en rojo no se puede mergear | T1 | M–Mi |
+| **T3** | Cuentas y despliegue: **Supabase (`sa-east-1`) el lunes**. Después Fly (`gru`) y Vercel con sus **URL gratuitas** (`*.fly.dev`, `*.vercel.app`) y `GET /health` desplegado. Volver a verificar los free tiers y medir el RTT desde Cochabamba. **Dominio propio y Resend: opcionales** en esta semana | C | Proyecto de Supabase creado el lunes. `GET /health` responde desde `https://<app>.fly.dev` y el RTT queda anotado en la tabla de doc 10 | T1 (solo para Fly y Vercel) | L (Supabase) · Mi–V (Fly, Vercel) |
+| **T4** | **Migración de `usuarios` primero** (`citext`, rol, `CHECK` del teléfono +591), lista el martes para desbloquear a B | A | `prisma migrate` crea `usuarios` en local y en CI | T1 | L–M |
+| **T5** | Resto del esquema de doc 09, con SQL manual para índices parciales, `CHECK` y FK normales (incluye `simulador_pagos` y `pagos.creado_en`/`actualizado_en`) | A | Migración en limpio, sin errores, en local y en CI | T4 | M–J |
+| **T6** | **Prueba de Prisma con el pooler de Supabase** en modo transacción (`pgbouncer=true`, `connection_limit`) + `prisma migrate deploy` con `DIRECT_URL` | A + C | Una consulta, una `$transaction` y un `$queryRaw` funcionan contra Supabase. Resultado anotado en el riesgo correspondiente (§3) | T3 (solo la cuenta de Supabase, lunes), T4 | M–Mi |
+| **T7** | Semillas: 9 departamentos, ciudades de Cochabamba y un usuario por rol (ADMIN, ORGANIZADOR, VALIDADOR, COMPRADOR) | A | `npm run seed` se puede correr dos veces sin duplicar | T5 | J |
+| **T8** | Tests de restricciones: 2 entradas válidas para un asiento, `CHECK` de estado/`orden_id`/`expires_at`, índice de RN-04, `UNIQUE(proveedor, evento_externo_id)`, FK `asientos.orden_id` | A | Cada INSERT inválido falla, en verde en CI | T2, T5 | J–V |
+| **T9** | Auth completa: API de registro y login (argon2id, JWT HS256 de 60 min), `JwtGuard` y `RolesGuard` + **web de login** en Next.js (layout, login y registro en es-BO, cliente HTTP con token, ruta protegida) | B | A-01 (403) y A-04 (401) en verde. Login desplegado en `*.vercel.app` contra la API en `*.fly.dev` | T1, T4 (y T3 para el despliegue) | M–V |
+| **T10** | **Contrato del simulador en `packages/shared`** (solo tipos y un documento, sin implementación): `ProveedorPago` (con `umbralReconciliacion`), `EventoPagoNormalizado`, formato de `Simulador-Firma` y cuerpo del webhook | C | PR revisado y aprobado por A | T1 | J–V |
+| **T11** | **Probar si se puede abrir una cuenta de test de Stripe desde Bolivia** (registro, país, obtener `sk_test_`/`whsec_`) | C | Resultado anotado en doc 13 §1 (sí/no, con fecha). Decide si `StripeTestAdapter` sigue en la semana 4 | — | V |
+
+**Ruta crítica:** T1 (lunes) → T4 (martes) → T9 (auth + web, hasta el viernes, con el despliegue de T3 al final). Si T1 se atrasa, A y B quedan bloqueados.
+**En paralelo desde el lunes:** cuenta de Supabase (T3) → T6 (martes–miércoles, junto con T4). T2 (CI) tiene que estar lista antes de que T8 pueda bloquear merges.
 
 ### Semana 2 — Reserva atómica (el corazón)
 | Entregable | Resp. | Criterio |
@@ -82,7 +91,7 @@ gantt
 | Entregable | Resp. | Criterio |
 |---|---|---|
 | Outbox + relay (SKIP LOCKED, `jobId`) + Worker: firma QR Ed25519, PDF (es-BO, hora La Paz) y email (Mailpit/Resend) con reintentos | C | W-01..W-06 en verde |
-| `StripeTestAdapter` (Checkout en modo test) + `stripe listen` en local | A | Pagar con 4242... emite la entrada |
+| **Opcional**, solo si la prueba T11 de la semana 1 confirmó que se puede abrir la cuenta de test desde Bolivia: `StripeTestAdapter` (Checkout en modo test) + `stripe listen` en local. La demo usa el **simulador como flujo principal** | A | Si se hace: pagar con 4242... emite la entrada. Si no: no afecta a la demo |
 | Reconexión con backoff + jitter, fallback a polling, resync por versión, contador de reserva | B | R-02..R-04 |
 
 ### Semana 5 — Puerta y robustez
@@ -109,8 +118,9 @@ gantt
 | La concurrencia "funciona en local" pero no en el despliegue | Baja | Alto | `carrera.js` contra Fly desde la semana 2 |
 | Un integrante se enferma o abandona | Media | Alto | Slices verticales completos (nada queda a medias en capas). Revisión cruzada para que otro sepa continuar |
 | La cuota de Resend (100/día) se agota en los ensayos | Media | Bajo | Mailpit en local y Resend solo en el entorno desplegado. Pocos emails reales |
+| Sin dominio propio verificado, el proveedor de email (Resend) podría permitir enviar solo a la dirección de la cuenta, no a cualquier destinatario | Media | Medio | En desarrollo, Mailpit. Para la demo, enviar solo a correos del equipo o comprar un dominio barato y verificarlo antes de la semana 4. La entrada se ve igual en "Mis entradas" (doc 07 §5) |
 | El mapa es lento en celulares de gama baja | Media | Medio | Canvas/SVG simple. Probar en el celular más viejo del equipo en la semana 3 |
-| Webhooks de Stripe no llegan en local | Media | Bajo | `stripe listen`. El simulador como respaldo |
+| Stripe (opcional) no permite abrir la cuenta de test desde Bolivia, o sus webhooks no llegan en local | Media | Bajo | El simulador es el proveedor principal y la demo no depende de Stripe. Si se usa Stripe: prueba T11 en la semana 1 y `stripe listen` en local |
 | Alcance demasiado grande | Alta | Alto | Plan de recorte (abajo) |
 
 ## 4. Plan de recorte (si falta tiempo)
@@ -125,9 +135,17 @@ Se recorta **de abajo hacia arriba**. Lo de arriba **no se negocia**.
 | 🔒 4 | Mapa en tiempo real multi-instancia | **Nunca** |
 | 5 | Expiración con job | La expiración perezosa basta para la correctitud. El job puede ser más simple |
 | 6 | Validador con cámara | Fallback: pegar el texto del QR en un input |
-| 7 | Stripe test | Fallback: solo el simulador (el patrón Adapter se demuestra igual) |
+| 7 | Stripe test (opcional) | Se recorta entero. El simulador ya es el proveedor principal, y el patrón Adapter se demuestra con el puerto `ProveedorPago` + `SimuladorAdapter` + el diseño de `QrBancarioAdapter` |
 | 8 | Polling de respaldo | Solo la reconexión de Socket.IO |
 | 9 | PDF | Email con el QR como imagen embebida, sin PDF |
 | 10 | Rate limiting distribuido | Throttler en memoria |
 | 11 | Panel organizador completo | Eventos cargados por script de semilla |
 | 12 | Sala de espera virtual | Solo diseño (ya está en el doc 06) |
+
+## 5. Pendientes (huecos menores 10–14)
+
+- **10.** `01-vision-y-alcance.md` §7 cita `00-resumen-docente.md`, pero el archivo se llama `00-resumen.md`.
+- **11.** En la raíz hay un `arquitectura.md` vacío y un `README.md` de dos líneas, mientras RNF-13 promete "levantar todo en 5 min siguiendo el README".
+- **12.** Los plazos del job de expiración no coinciden: RNF-07 dice que limpia en ≤ 30 s y el test X-01 dice ≤ 15 s.
+- **13.** Con el Worker caído, la entrada aparece en "Mis entradas" pero **sin QR** (solo el Worker tiene la clave privada Ed25519). Falta decirlo en W-01 y en el guion de la demo.
+- **14.** El plan asigna `StripeTestAdapter` (semana 4) al Integrante A, mientras que la tabla de responsabilidades pone a C como dueño de pagos. Si es una rotación intencional, falta explicarlo.

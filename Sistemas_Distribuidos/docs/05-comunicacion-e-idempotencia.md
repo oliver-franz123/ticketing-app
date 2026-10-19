@@ -90,34 +90,46 @@ sequenceDiagram
     participant FE as Frontend
     participant API as API
     participant PG as Postgres
-    participant PP as Proveedor de pago
+    participant PP as Simulador de pagos<br/>(módulo SimuladorPagos de la API)
     participant RD as Redis/BullMQ
     participant WK as Worker
     participant RS as Resend
 
     C->>FE: "Pagar Bs 300,00"
     FE->>API: POST /ordenes/77/pago
-    API->>PG: verifica orden PENDIENTE_PAGO, extiende expires_at +2 min (1 vez)
+    API->>PG: verifica orden PENDIENTE_PAGO · extiende +2 min ordenes.expires_at y asientos.expires_at<br/>en la misma transacción, solo si extension_usada = false (doc 04 §4.4)
     API->>PP: crearIntento(orden 77, 30000 centavos, metadata ordenId=77)
-    PP-->>API: {referencia: pi_123, redirectUrl}
-    API->>PG: INSERT pagos (pi_123, EN_PROCESO)
-    API-->>FE: redirectUrl / clientSecret
-    C->>PP: Paga (tarjeta de prueba 4242...)
+    PP-->>API: {referencia: sim_pay_123, redirectUrl: /simulador/pagar/sim_pay_123}
+    API->>PG: INSERT pagos (simulador, sim_pay_123, EN_PROCESO)
+    API-->>FE: redirectUrl
+    C->>PP: En la página del simulador elige el modo (OK) y confirma
     PP-->>FE: vuelve a /ordenes/77 → "Procesando..." (NO confirma nada)
 
-    PP->>API: POST /webhooks/pagos/stripe (evt_abc, firma)
-    API->>API: verificar firma (raw body + secreto)
+    Note over PP,API: HTTP real a API_PUBLIC_URL: pasa por el proxy de Fly<br/>y puede llegar a otra instancia de la API
+    PP->>API: POST /webhooks/pagos/simulador (sim_evt_abc, Simulador-Firma)
+    API->>API: verificar firma HMAC (raw body + secreto + tolerancia de 5 min)
     API->>PG: BEGIN
-    API->>PG: INSERT webhook_eventos (stripe, evt_abc) ON CONFLICT DO NOTHING
+    API->>PG: INSERT webhook_eventos (simulador, sim_evt_abc) ON CONFLICT DO NOTHING
     alt 0 filas: ya procesado
         API->>PG: ROLLBACK
         API-->>PP: 200 OK (duplicado ignorado)
     else 1 fila: nuevo
         API->>PG: SELECT orden 77 FOR UPDATE
-        API->>PG: UPDATE asientos SET VENDIDO WHERE orden_id=77 AND estado='RESERVADO'
-        API->>PG: UPDATE ordenes SET PAGADA · UPDATE pagos SET CONFIRMADO
-        API->>PG: INSERT entradas (1 por asiento)
-        API->>PG: INSERT outbox (ENTRADAS_EMITIDAS, ordenId=77)
+        alt pago.fallido
+            API->>PG: UPDATE pagos SET FALLIDO WHERE estado='EN_PROCESO' (la orden sigue PENDIENTE_PAGO)
+        else pago.exitoso
+            API->>PG: SAVEPOINT recaptura
+            API->>PG: re-captura: UPDATE asientos SET VENDIDO (CAS todo o nada sobre los asientos de la orden, doc 04 §4.3)
+            alt consiguió todos los asientos
+                API->>PG: UPDATE ordenes SET PAGADA · UPDATE pagos SET CONFIRMADO
+                API->>PG: INSERT entradas (1 por asiento)
+                API->>PG: INSERT outbox (ENTRADAS_EMITIDAS, ordenId=77)
+            else faltó alguno
+                API->>PG: ROLLBACK TO SAVEPOINT recaptura
+                API->>PG: ordenes REEMBOLSO_REQUERIDO · pagos CONFIRMADO · libera los asientos aún suyos
+                API->>PG: INSERT outbox (REEMBOLSO_REQUERIDO, ordenId=77)
+            end
+        end
         API->>PG: COMMIT
         API-->>PP: 200 OK
     end
@@ -138,12 +150,14 @@ sequenceDiagram
     FE->>API: (polling 2 s o WS) GET /ordenes/77 → PAGADA ✅
 ```
 
+> **Variante opcional con Stripe test:** la secuencia es la misma. Solo cambian el participante (Stripe Checkout en lugar de la página del simulador), la referencia (`pi_…`), el evento (`evt_…`), la firma (`Stripe-Signature`) y la ruta: `POST /webhooks/pagos/stripe`. Desde `verificarYNormalizar` en adelante, `PagosService` ejecuta exactamente los mismos pasos.
+
 ### Detalles que importan
 
 1. **El navegador nunca confirma un pago.** La URL de retorno puede ser falsificada, o el usuario puede cerrar la pestaña. **Solo el webhook firmado** confirma.
-2. **Raw body:** la firma de Stripe se calcula sobre el cuerpo **exacto** en bytes. NestJS debe habilitar `rawBody: true` para esa ruta. Si el JSON se parsea y se vuelve a serializar, la firma no coincide.
+2. **Raw body:** la firma del proveedor se calcula sobre el cuerpo **exacto** en bytes (en el simulador, la cabecera propia `Simulador-Firma` con HMAC-SHA256; en la variante opcional con Stripe, `Stripe-Signature`). NestJS debe habilitar `rawBody: true` para esa ruta. Si el JSON se parsea y se vuelve a serializar, la firma no coincide.
 3. **Responder 200 al duplicado.** Si respondiéramos 4xx/5xx, el proveedor **seguiría reintentando**.
-4. **Responder rápido.** Stripe espera una respuesta en pocos segundos. Por eso la transacción del webhook solo hace escrituras en la BD, y el PDF y el email van por la cola.
+4. **Responder rápido.** El proveedor espera una respuesta en pocos segundos (el simulador, igual que Stripe, reintenta si no recibe un 2xx). Por eso la transacción del webhook solo hace escrituras en la BD, y el PDF y el email van por la cola.
 5. **Verificar el monto.** Si `evento.monto != orden.totalCentavos` o la moneda no coincide: no se emiten entradas, la orden pasa a `REVISION_MANUAL` y se genera una alerta.
 6. **Orden de llegada:** un `payment_failed` puede llegar **después** de un `succeeded` (reintentos del proveedor). Regla: una orden PAGADA **no retrocede** por un evento posterior de fallo.
 
@@ -201,13 +215,14 @@ Si Redis está caído, el relay falla, la fila sigue con `publicado_en = NULL` y
 
 **Problema:** Stripe no sirve en producción en Bolivia, y el proveedor real (QR bancario) todavía no existe para nosotros. No queremos reescribir Órdenes cuando cambie el proveedor.
 
-**Elección:** un **puerto** (interfaz) en el dominio y un **adaptador** por proveedor. Qué adaptador se usa lo decide la configuración (`PAYMENT_PROVIDER=stripe|simulador|qr`): eso es el patrón Strategy.
+**Elección:** un **puerto** (interfaz) en el dominio y un **adaptador** por proveedor. Qué adaptadores existen y cuál se usa lo decide la configuración: `PAYMENT_PROVIDERS=simulador,stripe` registra los habilitados y `PAYMENT_PROVIDER_DEFAULT=simulador` elige el de los pagos nuevos (valores posibles: `simulador|stripe|qr`). Los webhooks se enrutan por `:proveedor` (`POST /webhooks/pagos/simulador`, `/webhooks/pagos/stripe`): el controlador elige el adaptador de ese proveedor para verificar la firma, aunque el pago se haya creado cuando el proveedor por defecto era otro. Eso es el patrón Strategy. La API no arranca si `PAYMENT_PROVIDER_DEFAULT` no está en `PAYMENT_PROVIDERS`.
 
 ```mermaid
 classDiagram
     class ProveedorPago {
         <<interface>>
         +nombre: string
+        +umbralReconciliacion: duración
         +crearIntento(orden: OrdenParaPago) IntentoPago
         +verificarYNormalizar(headers, rawBody) EventoPagoNormalizado
         +consultarEstado(referencia) EstadoPago
@@ -221,22 +236,26 @@ classDiagram
         montoCentavos: bigint
         moneda: "BOB"
     }
+    class SimuladorAdapter {
+        página propia de "pago"
+        firma HMAC-SHA256 de t.rawBody
+        estado en tabla simulador_pagos
+        modos: OK, RECHAZO, DUPLICAR x N, DEMORA s, DESORDEN
+    }
     class StripeTestAdapter {
+        <<opcional>>
+        (opcional) solo si se abre la cuenta de test
         Checkout Session (modo test)
         verifica Stripe-Signature
     }
-    class SimuladorAdapter {
-        página propia de "pago"
-        firma HMAC
-        modos: OK, RECHAZO, DUPLICAR x N, DEMORA s, DESORDEN
-    }
     class QrBancarioAdapter {
-        FUTURO
+        <<futuro>>
+        (futuro)
         genera QR dinámico vía API bancaria
         callback/consulta del banco
     }
-    ProveedorPago <|.. StripeTestAdapter
     ProveedorPago <|.. SimuladorAdapter
+    ProveedorPago <|.. StripeTestAdapter
     ProveedorPago <|.. QrBancarioAdapter
     class PagosService {
         +iniciarPago(ordenId)
@@ -246,12 +265,21 @@ classDiagram
 ```
 
 - `PagosService.procesarWebhook` **no sabe** de Stripe: recibe un `EventoPagoNormalizado` y aplica las reglas (idempotencia, asientos, entradas, outbox). **Las reglas se prueban una vez** y valen para todos los proveedores.
-- **SimuladorAdapter** es clave para la demo y los tests: permite **inyectar fallos** de forma determinista:
-  - `?modo=duplicar&veces=5`: envía el mismo webhook 5 veces en paralelo;
-  - `?modo=demora&s=400`: el webhook llega después de que venció la reserva;
-  - `?modo=desorden`: llega `FALLIDO` después de `EXITOSO`;
-  - `?modo=rechazo`: pago rechazado.
-- **QrBancarioAdapter (futuro):** genera un QR **dinámico** con monto y referencia. La confirmación llega por *callback* del banco o por consulta periódica (`consultarEstado`). El job de reconciliación usa `consultarEstado` para las órdenes "EN_PROCESO" de más de 10 min, por si se perdió un callback. Detalle en `13-pagos-en-bolivia.md`.
+- **SimuladorAdapter + módulo `SimuladorPagos`** (proveedor principal, ADR-0015). Es un módulo del backend que se comporta como un proveedor externo:
+  - **Página de pago propia:** `crearIntento` devuelve `redirectUrl = /simulador/pagar/<referencia>`, donde el comprador elige el modo y confirma.
+  - **Firma:** cabecera `Simulador-Firma: t=<ts>,v1=<hex>`, con `v1 = HMAC-SHA256(SIMULADOR_WEBHOOK_SECRET, "<ts>.<rawBody>")`. La API la compara en tiempo constante y rechaza (400) si `t` tiene más de **5 min** de diferencia con su reloj (contra la repetición de webhooks viejos).
+  - **Entrega por HTTP real** a `API_PUBLIC_URL + /webhooks/pagos/simulador`: pasa por el proxy y puede llegar a otra instancia.
+  - **Reintentos de entrega** con backoff (5 s, 30 s, 2 min, 10 min) mientras la API no responda 2xx, como un proveedor real.
+  - **Estado en la tabla `simulador_pagos`**, no en memoria: con 2 instancias, la página de pago, la confirmación y `consultarEstado` pueden caer en instancias distintas. Los envíos pendientes (incluida la `DEMORA`) se guardan con `enviar_en`, y los despacha un tick del propio módulo cada 1 s con `FOR UPDATE SKIP LOCKED`. **No depende del Worker:** con el Worker caído se puede seguir pagando.
+  - **`consultarEstado`:** `GET /simulador/pagos/:referencia`.
+  - **Modos** para inyectar fallos de forma determinista:
+    - `?modo=duplicar&veces=5`: envía el mismo webhook 5 veces en paralelo;
+    - `?modo=demora&s=400`: el webhook llega después de que venció la reserva;
+    - `?modo=desorden`: llega `FALLIDO` después de `EXITOSO`;
+    - `?modo=rechazo`: pago rechazado;
+    - `?modo=monto_erroneo`: el monto no coincide con la orden (P-06).
+- **`umbralReconciliacion` por proveedor:** cada adaptador declara cuánto esperar antes de preguntar por un pago EN_PROCESO, porque cada proveedor confirma a ritmos distintos. Valores iniciales: simulador **10 min** (mayor que la `DEMORA` más larga de la demo, para no adelantarse al webhook), Stripe **10 min**, QR bancario **1 min** (doc 13). `pagos.actualizado_en` registra la última consulta o cambio de estado.
+- **QrBancarioAdapter (futuro):** genera un QR **dinámico** con monto y referencia. La confirmación llega por *callback* del banco o por consulta periódica (`consultarEstado`). El job de reconciliación usa `consultarEstado` para los pagos EN_PROCESO cuyo `pagos.creado_en` supera el **`umbralReconciliacion` del adaptador**, por si se perdió un callback. Detalle en `13-pagos-en-bolivia.md`.
 
 ## 9. Validación en puerta (y por qué el QR usa Ed25519)
 

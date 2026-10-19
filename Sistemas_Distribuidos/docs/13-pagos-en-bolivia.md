@@ -6,8 +6,9 @@
 
 - La página oficial de Stripe con los países donde un negocio puede abrir una cuenta (<https://stripe.com/global>) **no incluye a Bolivia**. En Latinoamérica solo figuran **Brasil y México**.
 - Consecuencia: un comercio boliviano **no puede** recibir cobros reales con Stripe a su nombre.
-- **Uso en el proyecto:** solo el **modo test** de Stripe, que funciona sin activar la cuenta ni dar datos bancarios. Sirve para demostrar webhooks firmados, idempotencia y confirmación asíncrona con un proveedor real del mercado. **Nunca** se activa el modo live (la API se niega a arrancar con una clave `sk_live_`).
-- **Moneda en test:** si el Checkout de Stripe en modo test no acepta BOB para la cuenta de prueba (no lo verificamos en su tabla de monedas), se usa USD **solo en el adaptador de Stripe**, con una conversión fija documentada. El dominio sigue en BOB.
+- **Uso en el proyecto:** el proveedor de la demo es un **simulador propio** (ADR-0015): un módulo de la API con webhook firmado (HMAC) y modos para duplicar, retrasar, desordenar o rechazar pagos.
+- **Stripe test es opcional.** El modo test no exige activar la cuenta ni dar datos bancarios, pero **sí exige abrir una cuenta**, y el registro pide un país soportado. Puede que no sea posible desde Bolivia: se verifica en la prueba T11 de la semana 1. Si se consigue, sirve para mostrar lo mismo con un proveedor real del mercado. **Nunca** se activa el modo live (la API se niega a arrancar con una clave `sk_live_`).
+- **Moneda en test (solo si se usa Stripe):** si el Checkout de Stripe en modo test no acepta BOB para la cuenta de prueba (no lo verificamos en su tabla de monedas), se usa USD **solo en el adaptador de Stripe**, con una conversión fija documentada. El dominio sigue en BOB.
 
 ## 2. Panorama actual (verificado y no verificado)
 
@@ -75,11 +76,11 @@
 
 El puerto `ProveedorPago` (doc 05 §8) ya contempla lo necesario:
 
-| Método | Stripe test | Simulador | QR bancario (futuro) |
+| Método | Simulador (demo, principal) | Stripe test (opcional) | QR bancario (producción, futuro) |
 |---|---|---|---|
-| `crearIntento` | Checkout Session → `redirectUrl` | Página propia → `redirectUrl` | Pide al banco un **QR dinámico** (monto en centavos → Bs, referencia = `ordenId`) → **imagen QR** + vencimiento |
-| `verificarYNormalizar` | `Stripe-Signature` (HMAC) | HMAC propio | Según el banco: firma, IP permitida, token o mTLS (desconocido) |
-| `consultarEstado` | `GET payment_intent` | Memoria del simulador | API de consulta del banco |
+| `crearIntento` | Página propia `/simulador/pagar/:ref` → `redirectUrl` | Checkout Session → `redirectUrl` | Pide al banco un **QR dinámico** (monto en centavos → Bs, referencia = `ordenId`) → **imagen QR** + vencimiento |
+| `verificarYNormalizar` | HMAC propio (`Simulador-Firma`) | `Stripe-Signature` (HMAC) | Según el banco: firma, IP permitida, token o mTLS (desconocido) |
+| `consultarEstado` | `GET /simulador/pagos/:referencia` (tabla `simulador_pagos`) | `GET payment_intent` | API de consulta del banco |
 
 ### Flujo futuro con QR dinámico
 
@@ -100,7 +101,7 @@ sequenceDiagram
     C->>APP: escanea (o abre la imagen desde la galería)
     APP->>BK: paga
     BK->>API: callback (idTransaccion, estado=PAGADO)
-    API->>API: mismo flujo idempotente que el webhook de Stripe
+    API->>API: mismo flujo idempotente que el webhook del simulador
     Note over API: Si el callback no llega:<br/>job de reconciliación cada 1 min<br/>consultarEstado(idTransaccion)
     API-->>FE: (WS/polling) orden PAGADA
 ```
@@ -109,7 +110,7 @@ sequenceDiagram
 
 1. **Experiencia en el celular:** el comprador **ya está en su celular** y no puede escanear su propia pantalla. Hay que ofrecer "Descargar QR" o "Compartir" para abrirlo desde la galería en la app bancaria. Este detalle práctico es muy boliviano y a menudo se olvida.
 2. **Tiempo de reserva:** abrir la app bancaria y pagar tarda más que con tarjeta. Conviene que el TTL de la reserva sea **configurable por proveedor** (p. ej. 5 min para tarjeta y 10 min para QR), con un vencimiento del QR **menor o igual** al de la reserva.
-3. **Callbacks menos confiables:** se agrega el job de **reconciliación** (`consultarEstado` sobre los pagos EN_PROCESO de más de 1 min). Tanto el callback como la reconciliación pasan por la **misma** lógica idempotente: si llegan los dos, se procesa uno.
+3. **Callbacks menos confiables:** se agrega el job de **reconciliación** (`consultarEstado` sobre los pagos EN_PROCESO cuyo `pagos.creado_en` supera el `umbralReconciliacion` del adaptador: **1 min** para el QR, frente a 10 min del simulador y de Stripe). Tanto el callback como la reconciliación pasan por la **misma** lógica idempotente: si llegan los dos, se procesa uno.
 4. **Reembolsos:** el QR normalmente **no tiene reembolso automático**. REEMBOLSO_REQUERIDO implica una transferencia manual. Hay que documentarlo en los términos de venta.
 5. **Facturación:** la orden pagada dispararía (vía outbox) un job de facturación electrónica del SIN. **Fuera de alcance**, pero el punto de extensión ya existe.
 
@@ -117,17 +118,17 @@ sequenceDiagram
 
 | Aspecto | Proyecto (demo) | Producción en Bolivia |
 |---|---|---|
-| Proveedor | Stripe **test** + Simulador | QR dinámico bancario (+ PagosNet para tarjetas) |
+| Proveedor | **Simulador propio** (Stripe test opcional, si se puede abrir la cuenta desde Bolivia) | QR dinámico bancario (+ PagosNet para tarjetas) |
 | Dinero real | ❌ Nunca | ✅ |
 | Confirmación asíncrona por webhook | ✅ | ✅ (callback del banco) |
-| Firma del webhook | ✅ Stripe-Signature / HMAC | Según el banco |
+| Firma del webhook | ✅ HMAC del simulador (`Stripe-Signature` si se usa Stripe) | Según el banco |
 | Idempotencia ante duplicados | ✅ Demostrada con el simulador | ✅ Misma lógica |
 | Pagos tardíos y desordenados | ✅ Simulador | ✅ Misma lógica |
 | Reconciliación | Diseñada (`consultarEstado`) | ✅ Imprescindible |
 | Reembolsos | Estado REEMBOLSO_REQUERIDO (manual) | Manual o según el banco |
 | Requisitos legales | — | Empresa con NIT, convenio bancario, facturación SIN |
 
-**Mensaje para la defensa:** "La parte difícil de un sistema de pagos, que es la confirmación asíncrona, idempotente y tolerante a duplicados y retrasos, **es la misma** con cualquier proveedor. La demostramos con Stripe test y con un simulador que inyecta fallos. Cambiar a un QR bancario boliviano es **escribir un adaptador**, no rediseñar."
+**Mensaje para la defensa:** "La parte difícil de un sistema de pagos, que es la confirmación asíncrona, idempotente y tolerante a duplicados y retrasos, **es la misma** con cualquier proveedor. La demostramos con un simulador propio que inyecta duplicados, retrasos, desorden y rechazos (y, si se pudo abrir la cuenta, también con Stripe test). En producción, el proveedor sería un QR bancario. Cambiar a un QR bancario boliviano es **escribir un adaptador**, no rediseñar."
 
 ## 6. Fuentes
 

@@ -21,7 +21,7 @@ La documentación completa vive en `docs/`. Las decisiones están en `docs/adr/`
 - Moneda **BOB**. Montos como **enteros en centavos** (`bigint`), nunca `float`.
 - Fechas en **UTC** (`timestamptz`), mostradas en `America/La_Paz` (UTC-4, sin horario de verano).
 - Teléfono con prefijo **+591**.
-- **Pagos:** Stripe no acepta comercios con cuenta boliviana (verificado en stripe.com/global: en Latinoamérica solo figuran Brasil y México). Se usa **Stripe en modo test solo para la demo**. Los pagos van detrás de un puerto/adaptador con tres proveedores: `StripeTest`, `Simulador` (inyecta fallos y duplicados) y `QrBancario` (futuro: QR interoperable/QR Simple, pasarela local, billeteras).
+- **Pagos:** Stripe no acepta comercios con cuenta boliviana (verificado en stripe.com/global: en Latinoamérica solo figuran Brasil y México). El **proveedor principal es un simulador propio** (ADR-0015). Los pagos van detrás de un puerto/adaptador con tres proveedores: `Simulador` (**principal**: webhook firmado, inyecta fallos, retrasos y duplicados), `StripeTest` (**opcional**, solo si se puede abrir la cuenta de test) y `QrBancario` (**futuro**: QR interoperable/QR Simple, pasarela local, billeteras).
 - **Redes móviles** con latencia variable: WebSocket con reconexión automática y respaldo por polling. Frontend liviano.
 - **Facturación SIN:** fuera de alcance. Campos opcionales `nit` y `razon_social` en la orden.
 - **Datos personales:** contraseñas con hash (argon2id), mínimo de datos y QR **sin datos personales**.

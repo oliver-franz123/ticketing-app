@@ -10,8 +10,9 @@ stateDiagram-v2
     [*] --> LIBRE: evento publicado
     LIBRE --> RESERVADO: reservar() gana el UPDATE condicional
     RESERVADO --> LIBRE: cancelar() / expira (job o perezosa)
-    RESERVADO --> VENDIDO: webhook de pago OK (orden_id coincide)
-    RESERVADO --> RESERVADO: iniciarPago() extiende +2 min (una vez)
+    RESERVADO --> VENDIDO: webhook OK, re-captura (sigue con su orden_id, o reserva ajena vencida)
+    LIBRE --> VENDIDO: webhook tardío, re-captura (el job ya lo liberó y nadie lo tomó)
+    RESERVADO --> RESERVADO: iniciarPago() extiende +2 min (solo si extension_usada = false)
     LIBRE --> NO_DISPONIBLE: organizador bloquea (pasillo, cámara)
     VENDIDO --> [*]
     note right of RESERVADO
@@ -30,15 +31,22 @@ Y los estados de la **orden**:
 ```mermaid
 stateDiagram-v2
     [*] --> PENDIENTE_PAGO: reserva exitosa
-    PENDIENTE_PAGO --> PAGADA: webhook OK y asientos aún suyos
-    PENDIENTE_PAGO --> EXPIRADA: vence sin pago
+    PENDIENTE_PAGO --> PAGADA: webhook OK y re-captura de TODOS sus asientos
+    PENDIENTE_PAGO --> PENDIENTE_PAGO: pago rechazado (pagos.estado = FALLIDO), puede reintentar
+    PENDIENTE_PAGO --> EXPIRADA: vence sin pago (job, o la propia reserva del usuario)
     PENDIENTE_PAGO --> CANCELADA: el usuario cancela
-    PENDIENTE_PAGO --> FALLIDA: webhook de pago rechazado
-    EXPIRADA --> PAGADA: pago tardío y asientos aún libres (re-captura)
-    EXPIRADA --> REEMBOLSO_REQUERIDO: pago tardío y asientos ya tomados
+    PENDIENTE_PAGO --> REEMBOLSO_REQUERIDO: webhook OK pero falta algún asiento
+    PENDIENTE_PAGO --> REVISION_MANUAL: monto o moneda no coinciden
+    EXPIRADA --> PAGADA: pago tardío y re-captura de TODOS sus asientos
+    EXPIRADA --> REEMBOLSO_REQUERIDO: pago tardío y algún asiento ya tomado
+    EXPIRADA --> REVISION_MANUAL: monto o moneda no coinciden
     PAGADA --> [*]
     REEMBOLSO_REQUERIDO --> [*]
+    REVISION_MANUAL --> [*]
+    CANCELADA --> [*]
 ```
+
+> No existe un estado FALLIDA de la orden: un rechazo marca el **pago** (`pagos.estado = FALLIDO`) y la orden sigue PENDIENTE_PAGO hasta su `expires_at`. El comprador puede reintentar con un nuevo intento de pago, **sin** nueva extensión de tiempo. "Re-captura" se define en §4.3.
 
 ## 2. El problema, con un ejemplo
 
@@ -86,10 +94,42 @@ El estado `RESERVADO` + `expires_at` es un **"lock lógico" persistido**: dura m
 
 ## 4. La solución elegida, paso a paso
 
-### 4.1 Reservar (una sola sentencia, todo o nada)
+### 4.1 Reservar (todo o nada)
+
+**Paso 0, RN-04 sin depender del job.** El índice único `ordenes(usuario_id, evento_id) WHERE estado='PENDIENTE_PAGO'` impide que un usuario tenga dos órdenes pendientes en el mismo evento. Pero si su orden anterior **ya venció** y el job todavía no la marcó (por ejemplo, con el Worker caído), el índice lo bloquearía igual. Por eso la transacción de reservar empieza marcando EXPIRADA esa orden vencida:
 
 ```sql
--- Dentro de una transacción (READ COMMITTED, el nivel por defecto de Postgres)
+-- Misma transacción que el resto de la reserva
+UPDATE ordenes
+SET estado = 'EXPIRADA'
+WHERE usuario_id = $usuario
+  AND evento_id  = $evento
+  AND estado     = 'PENDIENTE_PAGO'
+  AND expires_at < now();       -- now() de Postgres
+```
+
+No hace falta tocar sus asientos: la expiración perezosa ya los trata como libres, y el job los pasa a LIBRE y publica el delta cuando corra. Si la orden pendiente **no** venció, este UPDATE afecta 0 filas y el INSERT de la orden nueva (paso 1) choca con el índice: **409 `ORDEN_PENDIENTE_EXISTENTE`** (C-07).
+
+**Paso 1, crear la orden primero.** `asientos.orden_id` es una clave foránea **normal** (no diferible) hacia `ordenes(id)`, así que la orden tiene que existir antes de que un asiento apunte a ella:
+
+```sql
+INSERT INTO ordenes (id, usuario_id, evento_id, estado, expires_at, extension_usada,
+                     idempotency_key, total_centavos, moneda)
+VALUES ($orden, $usuario, $evento, 'PENDIENTE_PAGO',
+        now() + interval '5 minutes', false, $idempotencyKey,
+        (SELECT sum(z.precio_centavos)                 -- precio de cada zona al reservar (RN-05)
+           FROM asientos a JOIN zonas z ON z.id = a.zona_id
+          WHERE a.evento_id = $evento AND a.id = ANY($ids)),
+        'BOB');
+```
+
+- Si choca con el índice de RN-04: ROLLBACK y **409 `ORDEN_PENDIENTE_EXISTENTE`**, sin haber tocado ningún asiento.
+- Si choca con `UNIQUE(usuario_id, idempotency_key)`: es un reintento. ROLLBACK y se devuelve la orden que ya existe (**201** con el mismo `ordenId`, C-06).
+
+**Paso 2, tomar los asientos:**
+
+```sql
+-- Misma transacción (READ COMMITTED, el nivel por defecto de Postgres)
 WITH candidatos AS (
   SELECT id
   FROM asientos
@@ -112,14 +152,18 @@ WHERE a.id = c.id
 RETURNING a.id, a.version;
 ```
 
-- Si `RETURNING` devuelve **tantas filas como asientos pedidos**: se crea la orden y sus ítems en la **misma transacción**, `COMMIT` y **201**.
-- Si devuelve menos: **ROLLBACK** y **409 Conflict** con la lista de asientos no disponibles. Así se cumple el *todo o nada* (RN-03).
+**Paso 3, confirmar o deshacer todo:**
+- Si `RETURNING` devuelve **tantas filas como asientos pedidos**: `INSERT orden_items` (con el precio congelado de cada asiento), `COMMIT` y **201**.
+- Si devuelve **menos**: **ROLLBACK de toda la transacción**. Se deshacen el UPDATE de los asientos que sí se tomaron, el INSERT de la orden (paso 1) y el paso 0. Respuesta **409 Conflict** con la lista de asientos no disponibles. Así se cumple el *todo o nada* (RN-03) y nunca queda una orden sin asientos.
+- `now()` devuelve la hora de **inicio de la transacción**, así que `ordenes.expires_at` y `asientos.expires_at` quedan exactamente iguales aunque se escriban en sentencias distintas.
+
+**Regla de orden de bloqueo (reservas y re-capturas).** Toda sentencia que bloquea varios asientos lo hace en un **orden fijo, `ORDER BY id`**: la reserva (aquí), la re-captura y la liberación del webhook (§4.3), la extensión (§4.4) y el job de expiración (§6). Un *deadlock* necesita un ciclo: T1 tiene el asiento 1 y espera el 3, mientras T2 tiene el 3 y espera el 1. Si todos piden los locks de menor a mayor, ese ciclo no se puede formar. Ejemplo: una reserva pide {3, 2, 1} y, al mismo tiempo, la re-captura de una orden vencida pide {1, 2, 3}. Las dos piden primero el 1. La reserva, con `SKIP LOCKED`, ni siquiera espera. La re-captura espera unos milisegundos, pero nunca en un ciclo. Lo verifica el test C-09.
 
 **Por qué cada parte:**
 | Fragmento | Para qué |
 |---|---|
 | `estado='LIBRE' OR (... expires_at < now())` | **Expiración perezosa:** una reserva vencida se trata como libre **aunque el job aún no haya pasado**. La correctitud no depende del job |
-| `ORDER BY id ... FOR UPDATE` | Dos órdenes que piden {F-12, F-13} y {F-13, F-12} toman los locks en el **mismo orden**, así que no puede haber *deadlock* |
+| `ORDER BY id ... FOR UPDATE` | Dos órdenes que piden {F-12, F-13} y {F-13, F-12} toman los locks en el **mismo orden**, así que no puede haber *deadlock* (ver la regla de orden de bloqueo, abajo) |
 | `SKIP LOCKED` | Si otra transacción está reservando F-12 en ese instante, no esperamos: F-12 queda fuera de los candidatos y respondemos 409 al instante |
 | `version + 1` | El WebSocket envía la versión. El cliente descarta mensajes viejos que lleguen desordenados |
 
@@ -164,18 +208,70 @@ CHECK (
 
 Así, la invariante RN-01 queda garantizada **por la base de datos**, no solo por nuestro código. Esto es *defensa en profundidad*.
 
-### 4.3 Confirmar el pago (webhook)
+### 4.3 Confirmar el pago (webhook) y re-captura
+
+**Re-captura** = volver a tomar, con una actualización condicional y **todo o nada**, los asientos de la orden (los de `orden_items`) en el momento en que llega el pago. Un asiento se puede re-capturar si:
+- sigue `RESERVADO` con **nuestro** `orden_id`, aunque la reserva haya vencido;
+- está `LIBRE` (venció, el job lo liberó y nadie lo tomó);
+- está `RESERVADO` por **otra** orden cuya reserva ya venció (la misma regla de la expiración perezosa).
 
 ```sql
 -- Dentro de la transacción del webhook (ver doc 05 para la idempotencia)
-UPDATE asientos
-SET estado='VENDIDO', expires_at=NULL, version=version+1
-WHERE orden_id = $orden AND estado = 'RESERVADO'
-RETURNING id;
+SAVEPOINT recaptura;
+
+WITH candidatos AS (
+  SELECT a.id
+  FROM asientos a
+  JOIN orden_items oi ON oi.asiento_id = a.id AND oi.orden_id = $orden
+  WHERE (a.estado = 'RESERVADO' AND a.orden_id = $orden)        -- sigue siendo nuestro
+     OR  a.estado = 'LIBRE'                                       -- liberado y libre
+     OR (a.estado = 'RESERVADO' AND a.expires_at < now())         -- reserva ajena vencida
+  ORDER BY a.id
+  FOR UPDATE                    -- sin SKIP LOCKED: aquí conviene esperar unos ms y re-evaluar
+)
+UPDATE asientos a
+SET estado = 'VENDIDO', orden_id = $orden, expires_at = NULL, version = a.version + 1
+FROM candidatos c
+WHERE a.id = c.id
+RETURNING a.id;
 ```
-- Si se marcaron **todos** los asientos de la orden: orden PAGADA, `INSERT entradas` y `INSERT outbox` → COMMIT.
-- **No** se exige `expires_at > now()` en este paso: si el pago llegó y nadie más tomó el asiento (sigue con nuestro `orden_id`), vendemos. Es la decisión más justa para el comprador.
-- Si algún asiento ya tiene otro `orden_id` (venció y lo tomó otra persona): orden **REEMBOLSO_REQUERIDO**, se liberan los asientos que sí eran nuestros, outbox `REEMBOLSO_REQUERIDO` (email de disculpa). **Nunca** se emite una entrada duplicada.
+
+- **Consiguió todos** (filas devueltas = filas de `orden_items`): `UPDATE ordenes SET estado='PAGADA' WHERE id=$orden AND estado IN ('PENDIENTE_PAGO','EXPIRADA')`, pago CONFIRMADO, `INSERT entradas` (una por asiento) e `INSERT outbox (ENTRADAS_EMITIDAS)` → COMMIT.
+- **Faltó alguno** (otra orden lo tiene con reserva vigente, o ya está VENDIDO): `ROLLBACK TO SAVEPOINT recaptura`, así ningún asiento queda VENDIDO a medias. Después, en la misma transacción: orden **REEMBOLSO_REQUERIDO**, pago CONFIRMADO (el dinero sí llegó), se liberan los asientos que todavía eran nuestros (`WHERE orden_id=$orden AND estado='RESERVADO'`) e `INSERT outbox (REEMBOLSO_REQUERIDO)` (email de disculpa) → COMMIT. **Nunca** se emite una entrada duplicada.
+- El `SAVEPOINT` es necesario porque la fila de `webhook_eventos` insertada al inicio **debe** confirmarse en ambos casos: si no, el reintento del proveedor volvería a procesar el evento.
+- **Sin SKIP LOCKED:** si otra transacción está reservando uno de esos asientos justo ahora, saltarlo daría un REEMBOLSO_REQUERIDO falso. Esperar unos milisegundos es aceptable en un webhook. Postgres re-evalúa el WHERE tras la espera.
+- **Mismo orden de bloqueo que la reserva (`ORDER BY a.id`).** Como la re-captura sí espera, el orden fijo es lo que impide un *deadlock*: frente a una reserva que pide los mismos asientos en otro orden, o frente a la re-captura de **otra** orden que comparte asientos (por ejemplo, dos webhooks tardíos de órdenes que vencieron sobre los mismos asientos). La liberación del caso REEMBOLSO_REQUERIDO bloquea con el mismo patrón (`SELECT … WHERE orden_id=$orden AND estado='RESERVADO' ORDER BY id FOR UPDATE`). Ver la regla en §4.1 y el test C-09.
+- **Pago rechazado** (`pago.fallido`): no toca asientos ni orden. Solo `UPDATE pagos SET estado='FALLIDO' WHERE id=$pago AND estado='EN_PROCESO'`. La orden sigue PENDIENTE_PAGO hasta su `expires_at` y el comprador puede reintentar. Como el UPDATE exige `EN_PROCESO`, un `FALLIDO` que llega **después** de un `EXITOSO` no revierte nada (doc 05 §4).
+
+### 4.4 Extender la reserva al iniciar el pago (+2 min, una vez)
+
+`ordenes.expires_at` y `asientos.expires_at` deben moverse **juntos**: la reserva usa el de los asientos y el job usa el de la orden. Por eso se extienden en la **misma transacción**, y `extension_usada = false` garantiza que pase una sola vez, aunque el comprador toque "Pagar" dos veces o reintente tras un rechazo:
+
+```sql
+WITH o AS (
+  UPDATE ordenes
+  SET expires_at = expires_at + interval '2 minutes',
+      extension_usada = true
+  WHERE id = $orden
+    AND estado = 'PENDIENTE_PAGO'
+    AND extension_usada = false
+    AND expires_at > now()          -- una reserva ya vencida no se revive
+  RETURNING id, expires_at
+),
+s AS (
+  SELECT a.id
+  FROM asientos a JOIN o ON a.orden_id = o.id
+  WHERE a.estado = 'RESERVADO'
+  ORDER BY a.id                     -- mismo orden de bloqueo que reservar y re-capturar
+  FOR UPDATE OF a
+)
+UPDATE asientos a
+SET expires_at = o.expires_at
+FROM s, o
+WHERE a.id = s.id;
+```
+
+Si el primer UPDATE afecta 0 filas (extensión ya usada), el pago sigue con el vencimiento actual. No hace falta incrementar `version`: el vencimiento no se muestra en el mapa.
 
 ## 5. Diagrama de secuencia: dos usuarios, un asiento
 
@@ -195,14 +291,14 @@ sequenceDiagram
         Beto->>API2: POST /eventos/42/reservas {asientos:[F-12]}
     end
 
-    API1->>PG: BEGIN · UPDATE ... WHERE estado='LIBRE' ...
-    API2->>PG: BEGIN · UPDATE ... WHERE estado='LIBRE' ...
+    API1->>PG: BEGIN · INSERT ordenes (PENDIENTE_PAGO) · UPDATE asientos ... WHERE estado='LIBRE' ...
+    API2->>PG: BEGIN · INSERT ordenes (PENDIENTE_PAGO) · UPDATE asientos ... WHERE estado='LIBRE' ...
     Note over PG: T1 toma el lock de la fila F-12.<br/>T2: SKIP LOCKED → 0 candidatos<br/>(sin SKIP LOCKED: espera y re-evalúa → 0 filas)
     PG-->>API1: 1 fila (F-12, version 8)
     PG-->>API2: 0 filas
-    API2->>PG: ROLLBACK
+    API2->>PG: ROLLBACK (deshace también la orden de Beto)
     API2-->>Beto: 409 Conflict {noDisponibles:[F-12]}
-    API1->>PG: INSERT ordenes, orden_items · COMMIT
+    API1->>PG: INSERT orden_items · COMMIT
     API1-->>Ana: 201 {ordenId, expiresAt}
     API1->>RD: PUBLISH evento:42 {F-12: RESERVADO, v8}
     RD-->>API1: entrega a sockets locales de la sala
@@ -259,7 +355,7 @@ RETURNING a.id, a.evento_id, a.version;
 | 4 | La API se cae **después** del COMMIT y antes de PUBLISH | Su reserva existe y los demás no la ven en vivo | El mapa de los demás queda desactualizado hasta el próximo delta o resync | Si otro intenta reservar ese asiento, recibe 409. La BD decide, no el mapa |
 | 5 | Redis cae | La reserva funciona. El mapa en vivo se congela y los clientes pasan a polling REST | Rate limiting en modo degradado (memoria local) | Redis no participa en la decisión |
 | 6 | El usuario cierra la pestaña sin pagar | — | La reserva vence a los 5 min | Expiración perezosa + job |
-| 7 | El usuario paga pero el **webhook** tarda 10 min | "Procesando pago..." | Puede vencer la reserva | Si el asiento sigue con su `orden_id` se vende. Si lo tomó otra persona: REEMBOLSO_REQUERIDO |
+| 7 | El usuario paga pero el **webhook** tarda 10 min | "Procesando pago..." | Puede vencer la reserva | Re-captura (§4.3): si se consiguen **todos** los asientos de la orden, se vende. Si falta alguno: REEMBOLSO_REQUERIDO, sin ventas parciales |
 | 8 | Llega el **webhook duplicado** | — | — | `UNIQUE(proveedor, evento_externo_id)` (doc 05) |
 | 9 | El Worker cae al emitir el PDF | La entrada aparece en "Mis entradas". El email llega más tarde | Job en Redis (o fila en outbox) | Reintento al volver |
 | 10 | El reloj de una instancia de la API está adelantado 2 min | Nada | Nada | Solo usamos `now()` de Postgres |
@@ -274,3 +370,5 @@ RETURNING a.id, a.evento_id, a.version;
 4. Una reserva vencida (reloj de BD manipulado con `expires_at` en el pasado) ⇒ otra orden puede reservar sin que corra el job.
 5. El job de expiración con 2 instancias en paralelo ⇒ cada asiento se libera una vez.
 6. Validación doble concurrente ⇒ una VÁLIDA y una YA_USADA.
+7. Una orden pendiente **vencida** del mismo usuario (sin que corra el job) no bloquea una nueva reserva en ese evento (C-08).
+8. Reserva y re-captura concurrentes sobre los mismos asientos en orden inverso ⇒ ningún deadlock (C-09).
