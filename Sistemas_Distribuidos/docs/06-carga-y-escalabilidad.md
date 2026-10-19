@@ -108,12 +108,13 @@ sequenceDiagram
 | Endpoint | Límite | Clave |
 |---|---|---|
 | `POST /auth/login` | 5/min | IP + email (contra fuerza bruta) |
-| `POST /eventos/:id/reservas` | 10/min | usuario. Además 30/min por IP (protege contra bots con muchas cuentas) |
+| `POST /eventos/:id/reservas` | 10/min por usuario · por IP: `RATE_LIMIT_RESERVAS_IP` (30/min por defecto, ≥ 100/min en demo) | usuario. Además IP (protege contra bots con muchas cuentas) |
 | `GET /eventos/:id/asientos` | 60/min | IP |
 | `POST /validaciones` | 120/min | validador |
 
 - Algoritmo: **ventana deslizante** o **token bucket**. Respuesta: `429` + `Retry-After`.
 - **Si Redis cae:** el throttler sigue con un contador **en memoria por instancia** (degradado, menos preciso). Se prefiere esto a rechazar todo.
+- **Por qué el límite por IP es configurable:** `carrera.js` dispara 50 reservas desde **una sola máquina** (una IP). Con 30/min por IP, unas 20 recibirían **429** y la demo mostraría 429 en lugar de 409. En el entorno de demo, `RATE_LIMIT_RESERVAS_IP` se sube a ≥ 100/min. El límite por usuario (10/min) **no cambia**: el script usa 50 usuarios distintos, uno por petición.
 - **IP compartida (CGNAT):** en redes móviles bolivianas muchos usuarios salen por la **misma IP pública** del operador. Por eso el límite por IP es generoso y el límite principal es **por usuario**.
 
 ### Sala de espera virtual (diseño para producción, opcional en la demo)

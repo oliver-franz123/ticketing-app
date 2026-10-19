@@ -34,7 +34,7 @@ flowchart LR
         PG[("PostgreSQL<br/>FUENTE DE VERDAD")]
     end
 
-    PAY["Proveedor de pago<br/>(Stripe test / Simulador)"]
+    PAY["Proveedor de pago<br/>(Simulador (principal) /<br/>Stripe test (opcional))"]
     MAIL["Resend<br/>(email)"]
 
     WEB -- "REST (HTTPS)" --> API
@@ -58,7 +58,7 @@ flowchart LR
 | **Reserva de 5 min con `expires_at`** | La reserva vence sola: la consulta trata como libre un asiento cuyo `expires_at` ya pasó, aunque el job de limpieza no haya corrido todavía. |
 | **Webhook idempotente + outbox** | El proveedor de pagos puede enviar el mismo aviso dos veces. Una restricción única sobre el ID del evento impide emitir dos entradas. El outbox garantiza que, si se confirmó el pago, el email **siempre** termina enviándose. |
 | **Worker separado** | Si el Worker se cae, la API sigue vendiendo. Los trabajos quedan en la cola y en el outbox y se procesan cuando vuelve. |
-| **Pagos detrás de un adaptador** | Stripe no opera con comercios bolivianos. Para la demo usamos Stripe en modo test y un simulador propio. En producción iría un QR bancario interoperable sin cambiar el núcleo. |
+| **Pagos detrás de un adaptador** | Stripe no opera con comercios bolivianos. El proveedor principal de la demo es un **simulador propio** (Simulador (principal) / Stripe test (opcional)). En producción iría un QR bancario interoperable sin cambiar el núcleo. |
 
 ## 5. Qué conceptos de Sistemas Distribuidos se demuestran
 

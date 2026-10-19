@@ -58,10 +58,11 @@ flowchart TB
     end
 
     subgraph ADP["Adaptadores de pago"]
-        A1["StripeTestAdapter"]
-        A2["SimuladorAdapter"]
+        A1["SimuladorAdapter<br/>+ módulo SimuladorPagos<br/>(propio del backend)"]
+        A2["StripeTestAdapter<br/>(opcional)"]
         A3["QrBancarioAdapter<br/>(futuro)"]
     end
+    style A2 stroke-dasharray: 5 5
 
     PG[("PostgreSQL<br/>Supabase")]
     RD[("Redis")]
@@ -70,6 +71,7 @@ flowchart TB
     FE -- REST --> GW
     P2 <-- WS --> WSG
     M4 --> ADP
+    A1 -. "webhook HTTP real<br/>POST /webhooks/pagos/simulador" .-> GW
     MOD --> PG
     M6 --> RD
     WSG <-- "pub/sub (redis-adapter)" --> RD
@@ -97,6 +99,7 @@ flowchart TB
 | **Resend** | API de email simple, plan gratis de 3.000/mes (100/día), adjuntos | — | SendGrid: **retiró su plan gratis** en 2025 (ahora es una prueba de 60 días) |
 | **Docker (local)** | El mismo Postgres y Redis para los 3 integrantes y para CI | "En mi máquina funciona" | Instalar Postgres a mano: versiones distintas |
 | **GitHub Actions** | Los tests de concurrencia corren en cada PR contra un Postgres real | Una regresión de concurrencia llegaría a la demo | — |
+| **Simulador de pagos** (módulo `SimuladorPagos`) | Proveedor principal de la demo: página de pago propia, webhook firmado y fallos **reproducibles** (duplicar, retrasar, desordenar, rechazar) | La demo dependería de abrir una cuenta de Stripe desde Bolivia, que puede no ser posible | App aparte: otro despliegue y más costo sin aportar a la demo. Como solo habla por HTTP y tiene su propia tabla, se puede extraer después (ADR-0015) |
 | **Prisma** | Migraciones versionadas y tipos generados | — | TypeORM: también válido. Prisma es más sencillo de aprender. Las consultas críticas se escriben en **SQL explícito** con `$queryRaw` para que se vea qué hace la BD |
 
 ### Lo que **no** usamos y por qué (honestidad técnica)
@@ -121,8 +124,11 @@ flowchart TB
 | Órdenes y Pagos | `ordenes`, `orden_items`, `pagos`, `webhook_eventos` | `crearOrden`, `iniciarPago`, `procesarWebhook` | Inventario, Entradas |
 | Entradas | `entradas`, `validaciones` | `emitir`, `validar` | — |
 | Outbox | `outbox` | `registrar(evento)` (dentro de la transacción del llamador) | — |
+| SimuladorPagos (solo local/demo, `SIMULADOR_HABILITADO=true`) | `simulador_pagos` | Página `/simulador/pagar/:ref`, `GET /simulador/pagos/:referencia` (para `consultarEstado`) y el envío del webhook | **Ninguno**: no importa servicios de Órdenes/Pagos ni toca sus tablas |
 
 **Regla:** si `Pagos` necesita marcar asientos como vendidos, llama a `InventarioService.marcarVendidos(tx, ordenId)` **pasando la transacción**. No hace un `UPDATE asientos` por su cuenta. Así, si algún día Inventario se separa, el punto de corte ya está definido.
+
+**Regla del simulador:** `SimuladorPagos` se comporta como un proveedor **externo**. Avisa los pagos solo con un webhook por HTTP real a `POST /webhooks/pagos/simulador` (vía `API_PUBLIC_URL`), nunca llamando a `PagosService` en memoria. Así, extraerlo a un servicio aparte es cambiar una URL (ADR-0015).
 
 ## 5. Monolito modular vs. microservicios
 

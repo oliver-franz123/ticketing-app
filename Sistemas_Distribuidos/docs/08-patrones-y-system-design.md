@@ -6,8 +6,8 @@ Cada fila responde: **¿qué es?**, **¿dónde aparece en nuestro sistema?** y *
 
 | Patrón | Qué es | Dónde aparece | Problema que resuelve |
 |---|---|---|---|
-| **Adapter** | Envuelve una API externa detrás de una interfaz propia | `StripeTestAdapter`, `SimuladorAdapter`, `QrBancarioAdapter` implementan `ProveedorPago` | El dominio no depende de Stripe, y cambiar a un QR bancario no toca Órdenes |
-| **Strategy** | Elegir el algoritmo en tiempo de ejecución | `PAYMENT_PROVIDER=stripe\|simulador` elige el adaptador al arrancar | Mismo flujo con distintos proveedores, en tests y en la demo |
+| **Adapter** | Envuelve una API externa detrás de una interfaz propia | `SimuladorAdapter`, `StripeTestAdapter` (opcional) y `QrBancarioAdapter` (futuro) implementan `ProveedorPago` | El dominio no depende de Stripe, y cambiar a un QR bancario no toca Órdenes |
+| **Strategy** | Elegir el algoritmo en tiempo de ejecución | `PAYMENT_PROVIDERS=simulador,stripe` registra los habilitados y `PAYMENT_PROVIDER_DEFAULT=simulador` elige el de los pagos nuevos (`simulador\|stripe\|qr`). El webhook se enruta por `:proveedor` (`/webhooks/pagos/simulador`, `/webhooks/pagos/stripe`) | Mismo flujo con distintos proveedores, en tests y en la demo |
 | **Puertos y adaptadores (hexagonal, ligero)** | El núcleo define interfaces y la infraestructura las implementa | `ProveedorPago`, `EnviadorEmail` (Resend o Mailpit), `FirmadorQr` | Probar la lógica con dobles de prueba sin red |
 | **Repository** | Acceso a datos detrás de métodos con nombre del dominio | `AsientosRepository.reservarAtomico(tx, eventoId, ids, ordenId)` | Encapsula el SQL crítico en un solo lugar probado |
 | **Unit of Work / Transacción explícita** | Un conjunto de cambios que se confirma o se descarta junto | `prisma.$transaction(async (tx) => ...)` en reservar y en el webhook | Atomicidad entre asientos, orden, entradas y outbox |
@@ -42,7 +42,7 @@ Cada fila responde: **¿qué es?**, **¿dónde aparece en nuestro sistema?** y *
 | **Consistencia eventual (en el cliente)** | Las réplicas convergen con el tiempo | El mapa del navegador es una réplica que converge | Aceptable: la BD decide en el momento de reservar |
 | **Consistencia fuerte (en la BD)** | Lecturas y escrituras linealizables sobre una fila | Reserva y validación en el primario de Postgres | Sin sobreventa |
 | **CQRS (idea, no framework)** | Separar el modelo de escritura del de lectura | Escritura: tablas normalizadas. Lectura: snapshot compacto + deltas | Optimizar la lectura masiva sin complicar la escritura |
-| **Reconciliación** | Comparar periódicamente con la fuente externa | Job futuro que consulta `consultarEstado` en pagos EN_PROCESO > 10 min | Webhooks perdidos (sobre todo con el QR bancario) |
+| **Reconciliación** | Comparar periódicamente con la fuente externa | Job futuro que consulta `consultarEstado` en pagos EN_PROCESO por encima del umbralReconciliacion del adaptador | Webhooks perdidos (sobre todo con el QR bancario) |
 | **Saga / compensación (no usado, explicado)** | Transacciones distribuidas con pasos compensatorios | Lo necesitaríamos con microservicios (doc 03 §5) | Justifica por qué un monolito simplifica |
 | **Strangler Fig** | Extraer partes de un monolito gradualmente | Plan de la Fase 4: extraer Validación y Notificaciones | Evolución sin reescritura total |
 | **Defensa en profundidad** | Varias capas de protección | UPDATE condicional + UNIQUE parcial + CHECK + idempotencia | Un bug en una capa no rompe la invariante |

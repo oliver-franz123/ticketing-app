@@ -23,6 +23,7 @@ flowchart TB
         API2["api · máquina 2<br/>(para demo multi-instancia)"]
         WK["worker · máquina 1<br/>sin puerto público"]
         RDS[("redis · máquina + volumen<br/>AOF activado<br/>solo red privada")]
+        SIM["Simulador de pagos<br/>módulo SimuladorPagos dentro<br/>de la API NestJS (no es otra máquina)"]
     end
 
     subgraph Supabase["Supabase · sa-east-1 (São Paulo)"]
@@ -30,7 +31,7 @@ flowchart TB
         PG[("PostgreSQL")]
     end
 
-    STR["Stripe (modo test)"]
+    STR["Stripe (modo test)<br/>OPCIONAL"]
     RES["Resend<br/>dominio verificado SPF/DKIM"]
     GH["GitHub Actions<br/>CI + deploy"]
 
@@ -41,10 +42,13 @@ flowchart TB
     API1 & API2 -- "redis.internal" --> RDS
     WK -- "redis.internal" --> RDS
     API1 & API2 & WK -- "TLS · puerto 6543" --> POOL --> PG
-    STR -- "webhook HTTPS" --> LB
+    API1 & API2 -. "contiene" .- SIM
+    SIM -- "webhook HTTPS real<br/>(API_PUBLIC_URL)" --> LB
+    STR -. "webhook HTTPS (opcional)" .-> LB
     WK -- "API HTTPS" --> RES
     GH -- "flyctl deploy" --> Fly
     GH -. "integración Git" .-> Vercel
+    style STR stroke-dasharray: 5 5
 ```
 
 ## 2. Regiones más cercanas a Bolivia (verificado)
@@ -75,7 +79,8 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 | **Upstash Redis** | Free | 256 MB, **500K comandos/mes**, 10 GB de ancho de banda | **BullMQ consulta Redis constantemente aunque no haya jobs** (lo advierte la doc de Upstash). Hay usuarios que agotaron la cuota en reposo. **No apto** para BullMQ en el plan gratis |
 | **Resend** | Free | **3.000 emails/mes, máx. 100/día**, 3 dominios, 30 días de logs | 100/día: en los ensayos de demo **no** usen emails reales masivos (usar Mailpit en local) |
 | **SendGrid** | — | **Retiró el plan gratis en 2025.** Ahora es una prueba de 60 días | Descartado |
-| **Stripe** | Modo test | Gratis, sin activar la cuenta | Bolivia **no** figura entre los países con cuenta Stripe. Solo modo test. Ver doc 13 |
+| **Simulador de pagos** | Propio | Módulo dentro de la API NestJS: no es otro servicio ni otra máquina, **sin costo extra** | Es el proveedor principal de la demo (ADR-0015) |
+| **Stripe** (opcional) | Modo test | Solo si se puede abrir la cuenta de test desde Bolivia (prueba T11 de la semana 1) | Bolivia **no** figura entre los países con cuenta Stripe y el registro pide un país soportado. Nunca modo live. Ver doc 13 |
 
 ## 4. Elección final
 
@@ -96,7 +101,7 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 
 **Plan B (Railway):** misma arquitectura, región US East. Interfaz más simple y plantilla de Redis. Costo fijo de US$5 con US$5 de uso incluido. Se paga con latencia mayor desde Bolivia.
 
-**Plan C (contingencia el día de la demo):** todo en una laptop con Docker + `stripe listen` para los webhooks. Debe estar ensayado.
+**Plan C (contingencia el día de la demo):** todo en una laptop con Docker. Los pagos usan el simulador (módulo de la API) con `API_PUBLIC_URL=http://localhost:3000`: el webhook va por HTTP a la propia API local, sin túneles ni cuentas externas. `stripe listen` solo hace falta si además se demuestra el adaptador opcional de Stripe. Debe estar ensayado.
 
 ## 5. Dominio y DNS (decidido: el equipo tiene o comprará un dominio)
 
@@ -121,13 +126,17 @@ Usar **subdominios del mismo dominio** simplifica CORS y, si en el futuro se usa
 | `JWT_EXPIRES_IN` | api | `60m` | No |
 | `QR_SIGNING_PRIVATE_KEY` | **solo worker** | Ed25519 en PEM | ✅ |
 | `QR_SIGNING_PUBLIC_KEY` | api | Ed25519 en PEM | No |
-| `PAYMENT_PROVIDER` | api | `stripe` \| `simulador` | No |
+| `PAYMENT_PROVIDERS` | api | Adaptadores habilitados, p. ej. `simulador,stripe` (valores: `simulador` \| `stripe` \| `qr`) | No |
+| `PAYMENT_PROVIDER_DEFAULT` | api | `simulador`: el proveedor de los pagos nuevos (`simulador` \| `stripe` \| `qr`). Debe estar incluido en `PAYMENT_PROVIDERS`, si no la API no arranca. Cada proveedor habilitado recibe sus webhooks en `POST /webhooks/pagos/:proveedor` | No |
 | `STRIPE_SECRET_KEY` | api | `sk_test_...` (**nunca** `sk_live_`; la API se niega a arrancar si detecta `live`) | ✅ |
 | `STRIPE_WEBHOOK_SECRET` | api | `whsec_...` | ✅ |
-| `SIMULADOR_WEBHOOK_SECRET` | api | HMAC del simulador | ✅ |
+| `SIMULADOR_HABILITADO` | api | `true` en local y demo: monta el módulo `SimuladorPagos`. Con un proveedor real, `false` | No |
+| `API_PUBLIC_URL` | api | `https://api.<dominio>` (local: `http://localhost:3000`). El simulador envía el webhook a esta URL | No |
+| `SIMULADOR_WEBHOOK_SECRET` | api | Secreto de la firma HMAC-SHA256 del simulador (`t=<ts>,v1=…` sobre `<ts>.<rawBody>`) | ✅ |
 | `RESEND_API_KEY` | worker | `re_...` | ✅ |
 | `EMAIL_FROM` | worker | `Entradas <entradas@<dominio>>` | No |
 | `CORS_ORIGINS` | api | `https://app.<dominio>` | No |
+| `RATE_LIMIT_RESERVAS_IP` | api | `30` reservas/min por IP; **≥ `100` en el entorno de demo** (la carrera sale de una sola IP) | No |
 | `RESERVA_TTL_SEGUNDOS` | api | `300` (en tests: `5`) | No |
 | `TZ_DISPLAY` | api, worker, frontend | `America/La_Paz` | No |
 | `NEXT_PUBLIC_API_URL` | frontend | `https://api.<dominio>` | No |

@@ -94,7 +94,7 @@ erDiagram
         uuid id PK
         uuid usuario_id FK
         uuid evento_id FK
-        text estado "PENDIENTE_PAGO PAGADA EXPIRADA CANCELADA FALLIDA REEMBOLSO_REQUERIDO REVISION_MANUAL"
+        text estado "PENDIENTE_PAGO PAGADA EXPIRADA CANCELADA REEMBOLSO_REQUERIDO REVISION_MANUAL"
         bigint total_centavos
         char3 moneda
         timestamptz expires_at
@@ -112,11 +112,13 @@ erDiagram
     PAGOS {
         uuid id PK
         uuid orden_id FK
-        text proveedor "stripe simulador qr"
+        text proveedor "simulador | stripe | qr"
         text referencia_externa
         text estado "EN_PROCESO CONFIRMADO FALLIDO"
         bigint monto_centavos
         char3 moneda
+        timestamptz creado_en
+        timestamptz actualizado_en
     }
     WEBHOOK_EVENTOS {
         bigint id PK
@@ -161,7 +163,22 @@ erDiagram
         text proveedor_msg_id
         int intentos
     }
+    SIMULADOR_PAGOS {
+        text referencia PK "sim_pay_..."
+        uuid orden_id "sin FK: el simulador es otro proveedor"
+        bigint monto_centavos
+        char3 moneda
+        text modo "OK RECHAZO DUPLICAR DEMORA DESORDEN MONTO_ERRONEO"
+        text estado "PENDIENTE PAGADO RECHAZADO"
+        timestamptz enviar_en "próximo envío del webhook"
+        int intentos_entrega
+        timestamptz creado_en
+    }
 ```
+
+`simulador_pagos` es del módulo `SimuladorPagos` (solo local/demo). **A propósito** no tiene relaciones con las demás tablas: simula un proveedor externo, que no ve nuestra base de datos. Así el módulo se puede extraer a otro servicio sin migrar claves foráneas (ADR-0015).
+
+**Estados de la orden y del pago:** la orden **no** tiene estado FALLIDA. Un rechazo se registra en el pago (`pagos.estado = 'FALLIDO'`) y la orden sigue PENDIENTE_PAGO hasta su `expires_at`, así el comprador puede reintentar con un nuevo pago (sin nueva extensión: `extension_usada`). Detalle en doc 04 §1 y §4.3.
 
 ## 3. Ciudad y departamento: listos para la expansión
 
@@ -180,8 +197,9 @@ erDiagram
 | Webhook procesado una vez | `UNIQUE (proveedor, evento_externo_id)` en `webhook_eventos` | Duplicados del proveedor |
 | Un cobro, un pago | `UNIQUE (proveedor, referencia_externa)` en `pagos` | Dos eventos distintos del mismo cobro |
 | Idempotencia de la reserva | `UNIQUE (usuario_id, idempotency_key)` en `ordenes` | Doble clic y reintentos de red |
-| Una orden pendiente por evento | `CREATE UNIQUE INDEX ... ON ordenes(usuario_id, evento_id) WHERE estado='PENDIENTE_PAGO'` | **RN-04** (acaparamiento) |
+| Una orden pendiente por evento | `CREATE UNIQUE INDEX ... ON ordenes(usuario_id, evento_id) WHERE estado='PENDIENTE_PAGO'` | **RN-04** (acaparamiento). Para no depender del job, la reserva marca antes EXPIRADA la orden pendiente **vencida** del mismo usuario y evento (doc 04 §4.1). Este mismo índice acelera esa búsqueda |
 | Un ítem por asiento por orden | PK `(orden_id, asiento_id)` | Asiento repetido en la misma orden |
+| El asiento apunta a una orden existente | `asientos.orden_id` → `ordenes(id)`: clave foránea **normal, no diferible** | Un asiento nunca apunta a una orden inexistente. Por eso la reserva inserta **primero** la orden y después marca los asientos. Si faltan asientos, el ROLLBACK deshace las dos cosas (doc 04 §4.1) |
 | Montos no negativos | `CHECK (precio_centavos >= 0)`, `CHECK (total_centavos >= 0)` | Errores de signo |
 | Moneda | `CHECK (moneda = 'BOB')` (por ahora) | Mezclar monedas |
 | Email único | `citext UNIQUE` | `Ana@x.com` = `ana@x.com` |
@@ -197,6 +215,7 @@ erDiagram
 | `eventos (estado, inicio)` + `recintos (ciudad_id)` | Listado por ciudad |
 | `ordenes (estado, expires_at) WHERE estado='PENDIENTE_PAGO'` | Marcar órdenes EXPIRADAS |
 | `outbox (id) WHERE publicado_en IS NULL` (parcial) | Relay: solo las pendientes |
+| `pagos (proveedor, creado_en) WHERE estado='EN_PROCESO'` (parcial) | Reconciliación: pagos EN_PROCESO cuyo `creado_en` supera el `umbralReconciliacion` de su proveedor |
 | `entradas (orden_id)` | "Mis entradas", generar el PDF |
 
 **¿Por qué índices parciales?** En el pico, de 15.000 asientos quizá 2.000 están RESERVADOS. Un índice que solo incluye esos es pequeño, cabe en memoria y el job lo recorre en milisegundos.
@@ -223,7 +242,7 @@ ordenes:       (o77, ana, e42, 'PENDIENTE_PAGO', 60000, 'BOB', '2026-11-01 14:05
 | Teléfono | Opcional | Contacto. No se usa para nada crítico |
 | CI (carnet) | **No** | No lo necesitamos. Si un organizador lo exige, sería una decisión futura con consentimiento explícito |
 | Contraseña | Solo el **hash argon2id** | Ni el equipo puede verla |
-| Tarjeta | **Nunca** | La maneja el proveedor (Stripe Checkout / banco) |
+| Tarjeta | **Nunca** | La maneja el proveedor de pagos (simulador, banco o pasarela) |
 | NIT / razón social | Opcional, en la orden | Factura futura |
 | QR | Solo `uuid` de entrada, `evento_id`, fecha de emisión y firma | Una foto filtrada del QR no expone a nadie |
 | Logs | Sin contraseñas, tokens ni payloads completos de pago | Se registra el `payload_sha256` del webhook, no el cuerpo |

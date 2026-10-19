@@ -27,14 +27,16 @@ flowchart BT
 | C-05 | El job `liberar-vencidas` corre en 2 procesos a la vez sobre 1.000 vencidos | Cada asiento se libera exactamente una vez. Los deltas publicados no se duplican en estado final |
 | C-06 | 20 reservas con la misma `Idempotency-Key` | 1 orden. Las 20 respuestas devuelven el mismo `ordenId` |
 | C-07 | Un usuario intenta una 2.ª orden pendiente en el mismo evento | 409 `ORDEN_PENDIENTE_EXISTENTE` |
+| C-08 | El usuario tiene una orden PENDIENTE_PAGO con `expires_at` en el pasado (forzado por SQL) y el job **no** corrió. Reserva de nuevo en el mismo evento | 201. La orden vieja queda EXPIRADA y la nueva PENDIENTE_PAGO: el índice de RN-04 no bloquea |
+| C-09 | La orden O1 venció con los asientos {1,2,3} y llega su webhook (re-captura en orden {1,2,3}) **al mismo tiempo** que una reserva nueva O2 pide {3,2,1}. Repetido 100 veces, más una variante con dos webhooks tardíos de órdenes que comparten asientos | **Ningún deadlock** (sin error `40P01`; el test falla si tarda > 5 s). En cada ronda hay un único dueño de los 3 asientos: si gana O1, O2 recibe 409; si gana O2, O1 queda REEMBOLSO_REQUERIDO. Nunca un reparto parcial |
 
 ### 2.2 Idempotencia y pagos (doc 05)
 | ID | Escenario | Resultado esperado |
 |---|---|---|
 | P-01 | Mismo webhook ×5 **en paralelo** (simulador `duplicar`) | 5 × HTTP 200. 1 orden PAGADA. N entradas (N = asientos). 1 fila outbox. Métrica `webhooks_total{resultado="duplicado"} = 4` |
 | P-02 | Webhook con firma inválida | 400. Nada cambia |
-| P-03 | Webhook llega tarde, asiento todavía con su `orden_id` | Orden PAGADA (re-captura) |
-| P-04 | Webhook llega tarde, asiento tomado por otro | REEMBOLSO_REQUERIDO. 0 entradas nuevas. Outbox de disculpa |
+| P-03 | Webhook llega tarde (reserva vencida). Variantes: a) los asientos siguen RESERVADO con su `orden_id`; b) el job ya los liberó (LIBRE) | En ambas: re-captura de **todos** los asientos. Orden PAGADA, asientos VENDIDO, N entradas |
+| P-04 | Webhook llega tarde y **uno** de los N asientos lo tiene otra orden con reserva vigente | REEMBOLSO_REQUERIDO. Ningún asiento queda VENDIDO para esta orden (todo o nada), los que eran suyos se liberan. 0 entradas nuevas. Outbox de disculpa. La fila de `webhook_eventos` sí queda (un reintento es duplicado) |
 | P-05 | `FALLIDO` llega después de `EXITOSO` | La orden sigue PAGADA |
 | P-06 | Monto del webhook ≠ total de la orden | REVISION_MANUAL. 0 entradas |
 | P-07 | Dos eventos distintos con la misma `referencia_externa` | 1 pago, 1 conjunto de entradas |
@@ -95,12 +97,12 @@ flowchart BT
 
 ## 3. Guion de la demo en vivo (≈ 12 min)
 
-**Preparación (antes de clase):** el proyecto de Supabase está activo (¡no pausado!), 2 máquinas `api` + 1 `worker` en Fly, el evento "Demo SD" con 100 asientos publicado, 2 navegadores abiertos, la terminal con `fly logs` y el panel `/admin/demo` abierto. Plan C: la laptop con Docker lista.
+**Preparación (antes de clase):** el proyecto de Supabase está activo (¡no pausado!), 2 máquinas `api` + 1 `worker` en Fly, el evento "Demo SD" con 100 asientos publicado, 2 navegadores abiertos, la terminal con `fly logs` y el panel `/admin/demo` abierto. **`RATE_LIMIT_RESERVAS_IP` ≥ 100** en el entorno de demo (si quedó en 30/min, la carrera muestra 429 en vez de 409). Plan C: la laptop con Docker lista.
 
 | Min | Acto | Qué se ve | Concepto |
 |---|---|---|---|
 | 0–1 | Contexto | Diagrama del doc 00 | Arquitectura |
-| 1–3 | **La carrera** | `node scripts/carrera.js --asiento F-12 --n 50` → `201: 1 · 409: 49`. Panel: `reservas_total{ok}=1, {conflicto}=49`. Logs de **ambas** instancias | UPDATE condicional, Postgres decide |
+| 1–3 | **La carrera** | `node scripts/carrera.js --asiento F-12 --n 50` → `201: 1 · 409: 49` (50 usuarios distintos desde una IP: requiere `RATE_LIMIT_RESERVAS_IP` ≥ 100). Panel: `reservas_total{ok}=1, {conflicto}=49`. Logs de **ambas** instancias | UPDATE condicional, Postgres decide |
 | 3–4 | **Mapa en vivo** | Navegador B ve F-12 en gris al instante, aunque está en otra instancia | Pub/sub multi-instancia |
 | 4–6 | **Pago + webhook duplicado** | Pagar con el simulador en modo `duplicar=5`. Panel: `webhooks{duplicado}=4`. "Mis entradas": 1 entrada | Idempotencia |
 | 6–8 | **Caída del Worker** | `fly machine stop <worker>`. Comprar 3 veces: todo OK. Bull Board: 3 jobs en espera. `fly machine start` → 3 emails llegan | Tolerancia a fallos, outbox |
@@ -109,7 +111,7 @@ flowchart BT
 | 10–11 | **Puerta** | Escanear el QR desde el celular: VÁLIDA, y de nuevo: YA USADA 21:04 | CAS en la validación |
 | 11–12 | Cierre | Tabla del doc 06 §8: demo vs. producción | Honestidad sobre la escala |
 
-**Script `carrera.js` (descripción, se implementa en la semana 2):** crea 50 usuarios de prueba (o usa 50 tokens pre-generados para no chocar con el rate limit por usuario), dispara 50 `POST /reservas` en paralelo con `Promise.allSettled`, cuenta los códigos HTTP e imprime una tabla. Luego consulta `GET /asientos` y verifica que F-12 tenga **un** `orden_id`. Debe correr tanto en local como contra producción.
+**Script `carrera.js` (descripción, se implementa en la semana 2):** usa **50 usuarios distintos** (creados para la prueba o con 50 tokens pre-generados), así el límite por usuario (10/min) no interviene. Como todas las peticiones salen de la misma IP, el entorno debe tener `RATE_LIMIT_RESERVAS_IP` ≥ 100/min. Además, dispara 50 `POST /reservas` en paralelo con `Promise.allSettled`, cuenta los códigos HTTP e imprime una tabla. Luego consulta `GET /asientos` y verifica que F-12 tenga **un** `orden_id`. Debe correr tanto en local como contra producción.
 
 ## 4. Definición de "hecho" (DoD) para cada historia
 - [ ] Tests (unitarios o de integración) en verde en CI.

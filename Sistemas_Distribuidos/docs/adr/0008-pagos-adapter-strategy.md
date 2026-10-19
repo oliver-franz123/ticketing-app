@@ -1,6 +1,6 @@
 # ADR-0008 — Pagos detrás de un puerto con tres adaptadores
 
-- **Estado:** Aceptado · **Fecha:** 2026-10-16
+- **Estado:** Reemplazado parcialmente por [ADR-0015](0015-simulador-de-pagos-principal.md) (el simulador pasa a ser el proveedor principal y Stripe test queda opcional) · **Fecha:** 2026-10-16
 
 ## Contexto
 Stripe no admite comercios bolivianos (stripe.com/global: en LATAM solo Brasil y México). En producción se usaría un QR interoperable bancario. Para la demo necesitamos un proveedor real y fallos reproducibles.

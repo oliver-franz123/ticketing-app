@@ -33,7 +33,7 @@ Nuestro sistema ataca tres causas técnicas:
 | **Idioma** | Español de Bolivia en la interfaz, los emails y el PDF ("Bs", formato `1.234,50`). |
 | **Teléfono** | Opcional, con formato `+591 7XXXXXXX`. |
 | **Conectividad** | Usuarios con 4G de calidad variable. Frontend liviano, WebSocket con reconexión automática y polling de respaldo. |
-| **Pagos** | Stripe no acepta comercios bolivianos (ver `13-pagos-en-bolivia.md`). La demo usa Stripe test + un simulador. En producción iría QR interoperable. |
+| **Pagos** | Stripe no acepta comercios bolivianos (ver `13-pagos-en-bolivia.md`). La demo usa un **simulador propio como proveedor principal** (Stripe test es opcional). En producción iría QR interoperable. |
 | **Facturación SIN** | Fuera de alcance. La orden guarda `nit` y `razon_social` opcionales para integrarla después. |
 | **Datos personales** | Mínimos (email, nombre y teléfono opcional). El QR no lleva datos personales y la contraseña se guarda con argon2id. |
 
@@ -41,7 +41,7 @@ Nuestro sistema ataca tres causas técnicas:
 
 ```mermaid
 flowchart LR
-    F0["Fase 0<br/>Proyecto universitario<br/>(demo, Stripe test)"] --> F1["Fase 1<br/>Cochabamba<br/>(1 ciudad, pocos recintos)"]
+    F0["Fase 0<br/>Proyecto universitario<br/>(demo con simulador propio)"] --> F1["Fase 1<br/>Cochabamba<br/>(1 ciudad, pocos recintos)"]
     F1 --> F2["Fase 2<br/>Eje troncal<br/>La Paz · El Alto · Santa Cruz"]
     F2 --> F3["Fase 3<br/>Resto de departamentos<br/>Oruro · Potosí · Chuquisaca ·<br/>Tarija · Beni · Pando"]
     F3 --> F4["Fase 4<br/>Nacional<br/>muchos eventos simultáneos"]
@@ -64,7 +64,7 @@ flowchart LR
 - Listado de eventos **filtrado por ciudad**, más el detalle del evento.
 - Mapa de asientos **en tiempo real**.
 - Reserva temporal de **5 minutos** (máx. 6 asientos por orden).
-- Pago con Stripe test o con el simulador, confirmado **por webhook**.
+- Pago con el simulador; Stripe test opcional. Confirmado **por webhook**.
 - Entrada con **QR firmado**, PDF y **email asíncrono**.
 - Panel del organizador: crear evento, recinto y mapa (filas × columnas por zona) y precios.
 - App web del validador: escanear QR y marcar USADA.
