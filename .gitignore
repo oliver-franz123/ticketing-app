@@ -1,0 +1,16 @@
+# Dependencias
+node_modules/
+
+# Builds
+dist/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+
+# Variables de entorno (se versiona solo .env.example)
+.env
+.env.local
+
+# Logs y sistema
+npm-debug.log*
+.DS_Store
