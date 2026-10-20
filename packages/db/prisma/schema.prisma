@@ -155,12 +155,13 @@ model Orden {
   razonSocial    String?  @map("razon_social")
   creadoEn       DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
 
-  usuario  Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
-  evento   Evento      @relation(fields: [eventoId], references: [id], onDelete: Restrict)
-  asientos Asiento[]
-  items    OrdenItem[]
-  pagos    Pago[]
-  entradas Entrada[]
+  usuario     Usuario      @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  evento      Evento       @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  asientos    Asiento[]
+  items       OrdenItem[]
+  pagos       Pago[]
+  entradas    Entrada[]
+  enviosEmail EnvioEmail[]
 
   // Idempotencia de la reserva: doble clic y reintentos de red (doc 05).
   @@unique([usuarioId, idempotencyKey])
@@ -298,4 +299,38 @@ model Validacion {
   validador Usuario  @relation(fields: [validadorId], references: [id], onDelete: Restrict)
 
   @@map("validaciones")
+}
+
+// ─── Outbox y emails (ADR-0005) ─────────────────────────────────────────────
+
+model Outbox {
+  id          BigInt    @id @default(autoincrement())
+  // ENTRADAS_EMITIDAS REEMBOLSO_REQUERIDO
+  tipo        String
+  // Solo IDs, sin datos personales.
+  payload     Json
+  creadoEn    DateTime  @default(now()) @map("creado_en") @db.Timestamptz(6)
+  // NULL = pendiente de publicar en BullMQ.
+  publicadoEn DateTime? @map("publicado_en") @db.Timestamptz(6)
+  intentos    Int       @default(0)
+
+  // Relay: solo las filas no publicadas.
+  @@index([id], map: "ix_outbox_pendientes", where: raw("publicado_en IS NULL"))
+  @@map("outbox")
+}
+
+model EnvioEmail {
+  ordenId        String  @map("orden_id") @db.Uuid
+  // ENTRADAS REEMBOLSO
+  tipo           String
+  // PENDIENTE ENVIADO FALLIDO
+  estado         String  @default("PENDIENTE")
+  proveedorMsgId String? @map("proveedor_msg_id")
+  intentos       Int     @default(0)
+
+  orden Orden @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+
+  // Un email por orden y tipo: el reintento del Worker no duplica (doc 05).
+  @@id([ordenId, tipo])
+  @@map("envios_email")
 }
