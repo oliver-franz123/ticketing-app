@@ -36,6 +36,7 @@ model Usuario {
 
   eventosOrganizados Evento[]          @relation("EventoOrganizador")
   eventosAsignados   EventoValidador[]
+  ordenes            Orden[]
 
   @@map("usuarios")
 }
@@ -98,6 +99,8 @@ model Evento {
   recinto     Recinto           @relation(fields: [recintoId], references: [id], onDelete: Restrict)
   zonas       Zona[]
   validadores EventoValidador[]
+  asientos    Asiento[]
+  ordenes     Orden[]
 
   // Listado por ciudad (doc 09 §5).
   @@index([estado, inicio])
@@ -113,7 +116,8 @@ model Zona {
   precioCentavos BigInt @map("precio_centavos")
   moneda         String @default("BOB") @db.Char(3)
 
-  evento Evento @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  evento   Evento    @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  asientos Asiento[]
 
   @@map("zonas")
 }
@@ -127,4 +131,83 @@ model EventoValidador {
 
   @@id([eventoId, usuarioId])
   @@map("evento_validadores")
+}
+
+// ─── Órdenes y asientos (doc 04) ─────────────────────────────────────────────
+
+model Orden {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  usuarioId      String   @map("usuario_id") @db.Uuid
+  eventoId       String   @map("evento_id") @db.Uuid
+  // PENDIENTE_PAGO PAGADA EXPIRADA CANCELADA REEMBOLSO_REQUERIDO REVISION_MANUAL.
+  // No hay FALLIDA: el rechazo se registra en pagos (doc 09 §2).
+  estado         String   @default("PENDIENTE_PAGO")
+  totalCentavos  BigInt   @map("total_centavos")
+  moneda         String   @default("BOB") @db.Char(3)
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+  // +2 min una sola vez al iniciar el pago (doc 04 §4.4).
+  extensionUsada Boolean  @default(false) @map("extension_usada")
+  idempotencyKey String   @map("idempotency_key") @db.Uuid
+  // Factura futura (SIN fuera de alcance).
+  nit            String?
+  razonSocial    String?  @map("razon_social")
+  creadoEn       DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
+
+  usuario  Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  evento   Evento      @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  asientos Asiento[]
+  items    OrdenItem[]
+
+  // Idempotencia de la reserva: doble clic y reintentos de red (doc 05).
+  @@unique([usuarioId, idempotencyKey])
+  // RN-04: una orden pendiente por usuario y evento. Índice único parcial:
+  // no usar findUnique por esta clave (ADR-0016).
+  @@unique([usuarioId, eventoId], map: "ux_orden_pendiente_por_evento", where: raw("estado = 'PENDIENTE_PAGO'"))
+  // Job que marca las órdenes EXPIRADAS (doc 09 §5).
+  @@index([estado, expiresAt], map: "ix_ordenes_pendientes_expires", where: raw("estado = 'PENDIENTE_PAGO'"))
+  @@map("ordenes")
+}
+
+model Asiento {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventoId  String    @map("evento_id") @db.Uuid
+  zonaId    String    @map("zona_id") @db.Uuid
+  // A..Z, AA
+  fila      String
+  columna   Int
+  // LIBRE RESERVADO VENDIDO NO_DISPONIBLE. Coherencia con orden_id y
+  // expires_at: CHECK en la migración (doc 04 §4.2).
+  estado    String    @default("LIBRE")
+  // FK normal, no diferible: la reserva inserta primero la orden (doc 04 §4.1).
+  ordenId   String?   @map("orden_id") @db.Uuid
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
+  // La envía el WebSocket para descartar deltas viejos.
+  version   Int       @default(0)
+
+  evento Evento      @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  zona   Zona        @relation(fields: [zonaId], references: [id], onDelete: Restrict)
+  orden  Orden?      @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  items  OrdenItem[]
+
+  @@unique([eventoId, fila, columna])
+  // Snapshot del mapa y conteos del panel.
+  @@index([eventoId, estado])
+  // Confirmar el pago: WHERE orden_id = $1.
+  @@index([ordenId])
+  // Job liberar-vencidas: solo lo reservado.
+  @@index([expiresAt], map: "ix_asientos_reservados_expires", where: raw("estado = 'RESERVADO'"))
+  @@map("asientos")
+}
+
+model OrdenItem {
+  ordenId        String @map("orden_id") @db.Uuid
+  asientoId      String @map("asiento_id") @db.Uuid
+  // Congelado al reservar (RN-05).
+  precioCentavos BigInt @map("precio_centavos")
+
+  orden   Orden   @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  asiento Asiento @relation(fields: [asientoId], references: [id], onDelete: Restrict)
+
+  @@id([ordenId, asientoId])
+  @@map("orden_items")
 }
