@@ -34,6 +34,9 @@ model Usuario {
   rol          Rol      @default(COMPRADOR)
   creadoEn     DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
 
+  eventosOrganizados Evento[]          @relation("EventoOrganizador")
+  eventosAsignados   EventoValidador[]
+
   @@map("usuarios")
 }
 
@@ -63,13 +66,65 @@ model Ciudad {
 }
 
 model Recinto {
-  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  ciudadId  Int    @map("ciudad_id")
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ciudadId  Int      @map("ciudad_id")
   nombre    String
   direccion String
-  ciudad    Ciudad @relation(fields: [ciudadId], references: [id], onDelete: Restrict)
+  ciudad    Ciudad   @relation(fields: [ciudadId], references: [id], onDelete: Restrict)
+  eventos   Evento[]
 
   // Listado por ciudad (doc 09 §5).
   @@index([ciudadId])
   @@map("recintos")
+}
+
+// ─── Eventos ─────────────────────────────────────────────────────────────────
+// Estados como text + CHECK en la migración (doc 09 §1), no enums: el SQL
+// explícito de ADR-0013 los compara sin casts.
+
+model Evento {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizadorId String   @map("organizador_id") @db.Uuid
+  recintoId     String   @map("recinto_id") @db.Uuid
+  titulo        String
+  // UTC. Se muestran en America/La_Paz.
+  inicio        DateTime @db.Timestamptz(6)
+  ventaInicio   DateTime @map("venta_inicio") @db.Timestamptz(6)
+  // BORRADOR PUBLICADO CANCELADO FINALIZADO
+  estado        String   @default("BORRADOR")
+  mapaVersion   BigInt   @default(0) @map("mapa_version")
+
+  organizador Usuario           @relation("EventoOrganizador", fields: [organizadorId], references: [id], onDelete: Restrict)
+  recinto     Recinto           @relation(fields: [recintoId], references: [id], onDelete: Restrict)
+  zonas       Zona[]
+  validadores EventoValidador[]
+
+  // Listado por ciudad (doc 09 §5).
+  @@index([estado, inicio])
+  @@map("eventos")
+}
+
+model Zona {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventoId       String @map("evento_id") @db.Uuid
+  // Platea, General
+  nombre         String
+  // Centavos de BOB (ADR-0010). CHECK >= 0 en la migración.
+  precioCentavos BigInt @map("precio_centavos")
+  moneda         String @default("BOB") @db.Char(3)
+
+  evento Evento @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+
+  @@map("zonas")
+}
+
+model EventoValidador {
+  eventoId  String @map("evento_id") @db.Uuid
+  usuarioId String @map("usuario_id") @db.Uuid
+
+  evento  Evento  @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+
+  @@id([eventoId, usuarioId])
+  @@map("evento_validadores")
 }
