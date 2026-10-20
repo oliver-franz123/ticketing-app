@@ -157,6 +157,7 @@ model Orden {
   evento   Evento      @relation(fields: [eventoId], references: [id], onDelete: Restrict)
   asientos Asiento[]
   items    OrdenItem[]
+  pagos    Pago[]
 
   // Idempotencia de la reserva: doble clic y reintentos de red (doc 05).
   @@unique([usuarioId, idempotencyKey])
@@ -210,4 +211,45 @@ model OrdenItem {
 
   @@id([ordenId, asientoId])
   @@map("orden_items")
+}
+
+// ─── Pagos y webhooks (doc 05, ADR-0004) ─────────────────────────────────────
+
+model Pago {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ordenId           String   @map("orden_id") @db.Uuid
+  // simulador | stripe | qr
+  proveedor         String
+  // sim_pay_..., pi_...
+  referenciaExterna String   @map("referencia_externa")
+  // EN_PROCESO CONFIRMADO FALLIDO
+  estado            String   @default("EN_PROCESO")
+  montoCentavos     BigInt   @map("monto_centavos")
+  moneda            String   @default("BOB") @db.Char(3)
+  creadoEn          DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
+  // Sin @updatedAt: el webhook y la reconciliación actualizan con SQL explícito
+  // (ADR-0013). Lo mantiene un trigger BEFORE UPDATE en la migración.
+  actualizadoEn     DateTime @default(now()) @map("actualizado_en") @db.Timestamptz(6)
+
+  orden Orden @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+
+  // Un cobro, un pago: dos eventos distintos del mismo cobro (doc 05).
+  @@unique([proveedor, referenciaExterna])
+  // Reconciliación: EN_PROCESO cuyo creado_en supera el umbral del proveedor.
+  @@index([proveedor, creadoEn], map: "ix_pagos_en_proceso", where: raw("estado = 'EN_PROCESO'"))
+  @@map("pagos")
+}
+
+model WebhookEvento {
+  id              BigInt   @id @default(autoincrement())
+  proveedor       String
+  eventoExternoId String   @map("evento_externo_id")
+  tipo            String
+  recibidoEn      DateTime @default(now()) @map("recibido_en") @db.Timestamptz(6)
+  // Hash del cuerpo, nunca el cuerpo (doc 09 §7).
+  payloadSha256   String   @map("payload_sha256")
+
+  // Webhook procesado una vez: INSERT ... ON CONFLICT DO NOTHING (ADR-0004).
+  @@unique([proveedor, eventoExternoId])
+  @@map("webhook_eventos")
 }
