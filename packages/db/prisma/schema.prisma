@@ -37,6 +37,8 @@ model Usuario {
   eventosOrganizados Evento[]          @relation("EventoOrganizador")
   eventosAsignados   EventoValidador[]
   ordenes            Orden[]
+  entradasUsadas     Entrada[]         @relation("EntradaUsadaPor")
+  validaciones       Validacion[]
 
   @@map("usuarios")
 }
@@ -158,6 +160,7 @@ model Orden {
   asientos Asiento[]
   items    OrdenItem[]
   pagos    Pago[]
+  entradas Entrada[]
 
   // Idempotencia de la reserva: doble clic y reintentos de red (doc 05).
   @@unique([usuarioId, idempotencyKey])
@@ -185,10 +188,11 @@ model Asiento {
   // La envía el WebSocket para descartar deltas viejos.
   version   Int       @default(0)
 
-  evento Evento      @relation(fields: [eventoId], references: [id], onDelete: Restrict)
-  zona   Zona        @relation(fields: [zonaId], references: [id], onDelete: Restrict)
-  orden  Orden?      @relation(fields: [ordenId], references: [id], onDelete: Restrict)
-  items  OrdenItem[]
+  evento   Evento      @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  zona     Zona        @relation(fields: [zonaId], references: [id], onDelete: Restrict)
+  orden    Orden?      @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  items    OrdenItem[]
+  entradas Entrada[]
 
   @@unique([eventoId, fila, columna])
   // Snapshot del mapa y conteos del panel.
@@ -252,4 +256,46 @@ model WebhookEvento {
   // Webhook procesado una vez: INSERT ... ON CONFLICT DO NOTHING (ADR-0004).
   @@unique([proveedor, eventoExternoId])
   @@map("webhook_eventos")
+}
+
+// ─── Entradas y validación en puerta (ADR-0011) ─────────────────────────────
+
+model Entrada {
+  // Va en el QR firmado: uuid no enumerable, sin datos personales.
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ordenId   String    @map("orden_id") @db.Uuid
+  asientoId String    @map("asiento_id") @db.Uuid
+  // EMITIDA USADA ANULADA
+  estado    String    @default("EMITIDA")
+  emitidaEn DateTime  @default(now()) @map("emitida_en") @db.Timestamptz(6)
+  usadaEn   DateTime? @map("usada_en") @db.Timestamptz(6)
+  usadaPor  String?   @map("usada_por") @db.Uuid
+
+  orden        Orden        @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  asiento      Asiento      @relation(fields: [asientoId], references: [id], onDelete: Restrict)
+  validador    Usuario?     @relation("EntradaUsadaPor", fields: [usadaPor], references: [id], onDelete: Restrict)
+  validaciones Validacion[]
+
+  // RN-01, la invariante principal: una entrada válida por asiento. Índice
+  // único parcial: no usar findUnique por asientoId, puede haber varias
+  // ANULADAS (ADR-0016). Predicado en la forma normalizada de Postgres.
+  @@unique([asientoId], map: "ux_entrada_valida_por_asiento", where: raw("estado = ANY (ARRAY['EMITIDA'::text, 'USADA'::text])"))
+  // "Mis entradas" y generar el PDF.
+  @@index([ordenId])
+  @@map("entradas")
+}
+
+model Validacion {
+  id          BigInt   @id @default(autoincrement())
+  // NULL solo si el QR no corresponde a ninguna entrada (INVALIDA, test A-05).
+  entradaId   String?  @map("entrada_id") @db.Uuid
+  validadorId String   @map("validador_id") @db.Uuid
+  // VALIDA YA_USADA INVALIDA OTRO_EVENTO
+  resultado   String
+  en          DateTime @default(now()) @db.Timestamptz(6)
+
+  entrada   Entrada? @relation(fields: [entradaId], references: [id], onDelete: Restrict)
+  validador Usuario  @relation(fields: [validadorId], references: [id], onDelete: Restrict)
+
+  @@map("validaciones")
 }
