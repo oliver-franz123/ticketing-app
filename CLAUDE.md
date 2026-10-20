@@ -14,6 +14,7 @@ La documentación completa vive en `docs/`. Las decisiones están en `docs/adr/`
 - Si algo es ambiguo, **preguntar antes de generar**.
 - Verificar con búsqueda web los datos que cambian (free tiers, regiones, pasarelas de pago). No darlos por supuestos.
 - Idioma: **español de Bolivia** (documentación, interfaz, emails, PDF).
+- Nunca usar `findUnique` sobre claves de índices únicos parciales (ver ADR-0016); usar `findFirst` con el filtro de estado.
 
 ## Contexto de país: Bolivia
 
