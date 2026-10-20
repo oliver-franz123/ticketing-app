@@ -36,3 +36,40 @@ model Usuario {
 
   @@map("usuarios")
 }
+
+// ─── Geografía (ADR-0014) ────────────────────────────────────────────────────
+// Expandir a otro departamento = insertar filas, sin cambios de código (RNF-14).
+
+model Departamento {
+  id       Int      @id @default(autoincrement()) @db.SmallInt
+  // CB LP SC OR PT CH TJ BE PD
+  codigo   String   @unique @db.Char(2)
+  nombre   String   @unique
+  ciudades Ciudad[]
+
+  @@map("departamentos")
+}
+
+model Ciudad {
+  id             Int          @id @default(autoincrement())
+  departamentoId Int          @map("departamento_id") @db.SmallInt
+  nombre         String
+  // Filtro ?ciudad=<slug> (doc 09 §3).
+  slug           String       @unique
+  departamento   Departamento @relation(fields: [departamentoId], references: [id], onDelete: Restrict)
+  recintos       Recinto[]
+
+  @@map("ciudades")
+}
+
+model Recinto {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ciudadId  Int    @map("ciudad_id")
+  nombre    String
+  direccion String
+  ciudad    Ciudad @relation(fields: [ciudadId], references: [id], onDelete: Restrict)
+
+  // Listado por ciudad (doc 09 §5).
+  @@index([ciudadId])
+  @@map("recintos")
+}
