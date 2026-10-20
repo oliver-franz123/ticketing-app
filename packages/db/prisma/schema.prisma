@@ -334,3 +334,26 @@ model EnvioEmail {
   @@id([ordenId, tipo])
   @@map("envios_email")
 }
+
+// ─── Simulador de pagos (ADR-0015) ──────────────────────────────────────────
+// Tabla del módulo SimuladorPagos (solo local/demo). Sin relaciones a
+// propósito: simula un proveedor externo, que no ve nuestra base de datos.
+
+model SimuladorPago {
+  // sim_pay_...
+  referencia      String    @id
+  // Sin FK: el simulador es otro proveedor.
+  ordenId         String    @map("orden_id") @db.Uuid
+  montoCentavos   BigInt    @map("monto_centavos")
+  moneda          String    @default("BOB") @db.Char(3)
+  // OK RECHAZO DUPLICAR DEMORA DESORDEN MONTO_ERRONEO
+  modo            String
+  // PENDIENTE PAGADO RECHAZADO
+  estado          String    @default("PENDIENTE")
+  // Próximo envío del webhook. NULL = nada pendiente.
+  enviarEn        DateTime? @map("enviar_en") @db.Timestamptz(6)
+  intentosEntrega Int       @default(0) @map("intentos_entrega")
+  creadoEn        DateTime  @default(now()) @map("creado_en") @db.Timestamptz(6)
+
+  @@map("simulador_pagos")
+}
