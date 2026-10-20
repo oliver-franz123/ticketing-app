@@ -1,10 +1,13 @@
 // Esquema de datos (doc 09). Lo que Prisma no expresa (extensiones, CHECK,
-// índices parciales) va como SQL manual dentro de la migración.
+// triggers) va como SQL manual dentro de la migración.
+// Índices parciales: preview partialIndexes (ADR-0016). El predicado va en la
+// forma normalizada de Postgres (`= ANY (ARRAY[...])`, no `IN`) o db:check da drift.
 
 generator client {
-  provider     = "prisma-client"
-  output       = "../src/generated/prisma"
-  moduleFormat = "cjs"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
