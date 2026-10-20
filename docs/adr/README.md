@@ -22,5 +22,6 @@ Cada ADR documenta **una** decisión: el contexto, las opciones, la decisión to
 | [0013](0013-prisma-con-sql-explicito.md) | Prisma como ORM, con SQL explícito en las consultas críticas | Aceptado |
 | [0014](0014-modelo-geografico.md) | Departamento → ciudad → recinto para la expansión nacional | Aceptado |
 | [0015](0015-simulador-de-pagos-principal.md) | Simulador de pagos propio (módulo del backend) como proveedor principal; Stripe test opcional | Aceptado |
+| [0016](0016-indices-parciales-prisma-preview.md) | Índices parciales con la preview `partialIndexes` de Prisma | Aceptado |
 
 Plantilla: [`plantilla.md`](plantilla.md)
