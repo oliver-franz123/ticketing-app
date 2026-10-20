@@ -1,0 +1,35 @@
+// Esquema de datos (doc 09). Lo que Prisma no expresa (extensiones, CHECK,
+// índices parciales) va como SQL manual dentro de la migración.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Rol {
+  COMPRADOR
+  ORGANIZADOR
+  VALIDADOR
+  ADMIN
+
+  @@map("rol")
+}
+
+model Usuario {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // citext: Ana@x.com y ana@x.com son el mismo email para el UNIQUE.
+  email        String   @unique @db.Citext
+  passwordHash String   @map("password_hash")
+  nombre       String
+  // Opcional (minimización de datos). CHECK +591 en la migración.
+  telefono     String?
+  rol          Rol      @default(COMPRADOR)
+  creadoEn     DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
+
+  @@map("usuarios")
+}
