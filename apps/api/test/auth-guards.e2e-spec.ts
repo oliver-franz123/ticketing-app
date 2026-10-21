@@ -101,12 +101,13 @@ describe('Guards de auth (A-01, A-04)', () => {
       ['sin sub', () => token({ rol: 'COMPRADOR' })],
     ];
 
-    it.each(casos)('%s', (_nombre, generar) =>
-      request(app.getHttpServer())
+    it.each(casos)('%s', async (_nombre, generar) => {
+      await request(app.getHttpServer())
         .get('/privado')
         .set('Authorization', `Bearer ${generar()}`)
         .expect(401)
-        .expect(NO_AUTENTICADO));
+        .expect(NO_AUTENTICADO);
+    });
 
     it('esquema distinto de Bearer', () =>
       request(app.getHttpServer())
@@ -130,11 +131,12 @@ describe('Guards de auth (A-01, A-04)', () => {
         .set('Authorization', `Bearer ${token({ sub: ID, rol: 'VALIDADOR' })}`)
         .expect(403));
 
-    it.each(['ORGANIZADOR', 'ADMIN'])('%s en POST /admin/eventos → 201', (rol) =>
-      request(app.getHttpServer())
+    it.each(['ORGANIZADOR', 'ADMIN'])('%s en POST /admin/eventos → 201', async (rol) => {
+      await request(app.getHttpServer())
         .post('/admin/eventos')
         .set('Authorization', `Bearer ${token({ sub: ID, rol })}`)
-        .expect(201));
+        .expect(201);
+    });
 
     it('sin token en un endpoint con @Roles → 401 (no 403)', () =>
       request(app.getHttpServer()).post('/admin/eventos').expect(401));
