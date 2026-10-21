@@ -27,7 +27,7 @@
 
 | Método y ruta | Rol | Respuestas clave |
 |---|---|---|
-| `POST /auth/registro` · `POST /auth/login` | público | 201 / 200 `{token}` · 401 |
+| `POST /auth/registro` · `POST /auth/login` | público | 201 / 200 `{token}` · 400 (validación) · 409 en el registro · 401 en el login |
 | `GET /ciudades` | público | 200 |
 | `GET /eventos?ciudad=cochabamba&desde=...` | público | 200 (cache 30 s) |
 | `GET /eventos/:id` | público | 200 |
@@ -40,6 +40,11 @@
 | `GET /mis-entradas` · `GET /entradas/:id/pdf` | comprador | 200 |
 | `POST /validaciones` `{qr}` | validador | 200 `{resultado: VALIDA \| YA_USADA \| INVALIDA \| OTRO_EVENTO, usadaEn?}` |
 | `POST /admin/eventos` ... | organizador | 201 |
+
+**Auth y enumeración de usuarios (T9):**
+- **Login:** responde lo mismo, `401 {"message": "Email o contraseña incorrectos"}`, cuando el email no existe y cuando la contraseña está mal. Si el email no existe, se verifica igual contra un hash señuelo de argon2id, para que el tiempo de respuesta no delate qué emails están registrados.
+- **Registro:** si el email ya existe responde `409 {"message": "No se pudo completar el registro"}`, sin decir qué campo chocó. **Limitación aceptada:** el 409 igual revela que el email está registrado. Evitarlo exige verificar el email (responder siempre «te enviamos un correo»), y eso está fuera de alcance. Lo mitiga el rate limit por IP (A-07).
+- **Guards:** cualquier JWT inválido (vencido, firma alterada, `alg: none`, mal formado) da el mismo `401 {"message": "No autenticado"}`. Un rol sin permiso da `403`. Todo endpoint exige JWT salvo los marcados con `@Publico()`.
 
 **Formato de dinero:** siempre `{"totalCentavos": 30000, "moneda": "BOB"}`. El frontend formatea `Bs 300,00` con `Intl.NumberFormat('es-BO', {style:'currency', currency:'BOB'})`.
 **Formato de fecha:** ISO 8601 en UTC (`2026-11-22T01:00:00Z`). El frontend lo muestra en `America/La_Paz` ("sáb. 21 nov., 21:00").
