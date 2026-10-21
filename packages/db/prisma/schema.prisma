@@ -1,10 +1,13 @@
 // Esquema de datos (doc 09). Lo que Prisma no expresa (extensiones, CHECK,
-// índices parciales) va como SQL manual dentro de la migración.
+// triggers) va como SQL manual dentro de la migración.
+// Índices parciales: preview partialIndexes (ADR-0016). El predicado va en la
+// forma normalizada de Postgres (`= ANY (ARRAY[...])`, no `IN`) o db:check da drift.
 
 generator client {
-  provider     = "prisma-client"
-  output       = "../src/generated/prisma"
-  moduleFormat = "cjs"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -31,5 +34,326 @@ model Usuario {
   rol          Rol      @default(COMPRADOR)
   creadoEn     DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
 
+  eventosOrganizados Evento[]          @relation("EventoOrganizador")
+  eventosAsignados   EventoValidador[]
+  ordenes            Orden[]
+  entradasUsadas     Entrada[]         @relation("EntradaUsadaPor")
+  validaciones       Validacion[]
+
   @@map("usuarios")
+}
+
+// ─── Geografía (ADR-0014) ────────────────────────────────────────────────────
+// Expandir a otro departamento = insertar filas, sin cambios de código (RNF-14).
+
+model Departamento {
+  id       Int      @id @default(autoincrement()) @db.SmallInt
+  // CB LP SC OR PT CH TJ BE PD
+  codigo   String   @unique @db.Char(2)
+  nombre   String   @unique
+  ciudades Ciudad[]
+
+  @@map("departamentos")
+}
+
+model Ciudad {
+  id             Int          @id @default(autoincrement())
+  departamentoId Int          @map("departamento_id") @db.SmallInt
+  nombre         String
+  // Filtro ?ciudad=<slug> (doc 09 §3).
+  slug           String       @unique
+  departamento   Departamento @relation(fields: [departamentoId], references: [id], onDelete: Restrict)
+  recintos       Recinto[]
+
+  @@map("ciudades")
+}
+
+model Recinto {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ciudadId  Int      @map("ciudad_id")
+  nombre    String
+  direccion String
+  ciudad    Ciudad   @relation(fields: [ciudadId], references: [id], onDelete: Restrict)
+  eventos   Evento[]
+
+  // Listado por ciudad (doc 09 §5).
+  @@index([ciudadId])
+  @@map("recintos")
+}
+
+// ─── Eventos ─────────────────────────────────────────────────────────────────
+// Estados como text + CHECK en la migración (doc 09 §1), no enums: el SQL
+// explícito de ADR-0013 los compara sin casts.
+
+model Evento {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizadorId String   @map("organizador_id") @db.Uuid
+  recintoId     String   @map("recinto_id") @db.Uuid
+  titulo        String
+  // UTC. Se muestran en America/La_Paz.
+  inicio        DateTime @db.Timestamptz(6)
+  ventaInicio   DateTime @map("venta_inicio") @db.Timestamptz(6)
+  // BORRADOR PUBLICADO CANCELADO FINALIZADO
+  estado        String   @default("BORRADOR")
+  mapaVersion   BigInt   @default(0) @map("mapa_version")
+
+  organizador Usuario           @relation("EventoOrganizador", fields: [organizadorId], references: [id], onDelete: Restrict)
+  recinto     Recinto           @relation(fields: [recintoId], references: [id], onDelete: Restrict)
+  zonas       Zona[]
+  validadores EventoValidador[]
+  asientos    Asiento[]
+  ordenes     Orden[]
+
+  // Listado por ciudad (doc 09 §5).
+  @@index([estado, inicio])
+  @@map("eventos")
+}
+
+model Zona {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventoId       String @map("evento_id") @db.Uuid
+  // Platea, General
+  nombre         String
+  // Centavos de BOB (ADR-0010). CHECK >= 0 en la migración.
+  precioCentavos BigInt @map("precio_centavos")
+  moneda         String @default("BOB") @db.Char(3)
+
+  evento   Evento    @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  asientos Asiento[]
+
+  @@map("zonas")
+}
+
+model EventoValidador {
+  eventoId  String @map("evento_id") @db.Uuid
+  usuarioId String @map("usuario_id") @db.Uuid
+
+  evento  Evento  @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+
+  @@id([eventoId, usuarioId])
+  @@map("evento_validadores")
+}
+
+// ─── Órdenes y asientos (doc 04) ─────────────────────────────────────────────
+
+model Orden {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  usuarioId      String   @map("usuario_id") @db.Uuid
+  eventoId       String   @map("evento_id") @db.Uuid
+  // PENDIENTE_PAGO PAGADA EXPIRADA CANCELADA REEMBOLSO_REQUERIDO REVISION_MANUAL.
+  // No hay FALLIDA: el rechazo se registra en pagos (doc 09 §2).
+  estado         String   @default("PENDIENTE_PAGO")
+  totalCentavos  BigInt   @map("total_centavos")
+  moneda         String   @default("BOB") @db.Char(3)
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(6)
+  // +2 min una sola vez al iniciar el pago (doc 04 §4.4).
+  extensionUsada Boolean  @default(false) @map("extension_usada")
+  idempotencyKey String   @map("idempotency_key") @db.Uuid
+  // Factura futura (SIN fuera de alcance).
+  nit            String?
+  razonSocial    String?  @map("razon_social")
+  creadoEn       DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
+
+  usuario     Usuario      @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  evento      Evento       @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  asientos    Asiento[]
+  items       OrdenItem[]
+  pagos       Pago[]
+  entradas    Entrada[]
+  enviosEmail EnvioEmail[]
+
+  // Idempotencia de la reserva: doble clic y reintentos de red (doc 05).
+  @@unique([usuarioId, idempotencyKey])
+  // RN-04: una orden pendiente por usuario y evento. Índice único parcial:
+  // no usar findUnique por esta clave (ADR-0016).
+  @@unique([usuarioId, eventoId], map: "ux_orden_pendiente_por_evento", where: raw("estado = 'PENDIENTE_PAGO'"))
+  // Job que marca las órdenes EXPIRADAS (doc 09 §5).
+  @@index([estado, expiresAt], map: "ix_ordenes_pendientes_expires", where: raw("estado = 'PENDIENTE_PAGO'"))
+  @@map("ordenes")
+}
+
+model Asiento {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventoId  String    @map("evento_id") @db.Uuid
+  zonaId    String    @map("zona_id") @db.Uuid
+  // A..Z, AA
+  fila      String
+  columna   Int
+  // LIBRE RESERVADO VENDIDO NO_DISPONIBLE. Coherencia con orden_id y
+  // expires_at: CHECK en la migración (doc 04 §4.2).
+  estado    String    @default("LIBRE")
+  // FK normal, no diferible: la reserva inserta primero la orden (doc 04 §4.1).
+  ordenId   String?   @map("orden_id") @db.Uuid
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
+  // La envía el WebSocket para descartar deltas viejos.
+  version   Int       @default(0)
+
+  evento   Evento      @relation(fields: [eventoId], references: [id], onDelete: Restrict)
+  zona     Zona        @relation(fields: [zonaId], references: [id], onDelete: Restrict)
+  orden    Orden?      @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  items    OrdenItem[]
+  entradas Entrada[]
+
+  @@unique([eventoId, fila, columna])
+  // Snapshot del mapa y conteos del panel.
+  @@index([eventoId, estado])
+  // Confirmar el pago: WHERE orden_id = $1.
+  @@index([ordenId])
+  // Job liberar-vencidas: solo lo reservado.
+  @@index([expiresAt], map: "ix_asientos_reservados_expires", where: raw("estado = 'RESERVADO'"))
+  @@map("asientos")
+}
+
+model OrdenItem {
+  ordenId        String @map("orden_id") @db.Uuid
+  asientoId      String @map("asiento_id") @db.Uuid
+  // Congelado al reservar (RN-05).
+  precioCentavos BigInt @map("precio_centavos")
+
+  orden   Orden   @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  asiento Asiento @relation(fields: [asientoId], references: [id], onDelete: Restrict)
+
+  @@id([ordenId, asientoId])
+  @@map("orden_items")
+}
+
+// ─── Pagos y webhooks (doc 05, ADR-0004) ─────────────────────────────────────
+
+model Pago {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ordenId           String   @map("orden_id") @db.Uuid
+  // simulador | stripe | qr
+  proveedor         String
+  // sim_pay_..., pi_...
+  referenciaExterna String   @map("referencia_externa")
+  // EN_PROCESO CONFIRMADO FALLIDO
+  estado            String   @default("EN_PROCESO")
+  montoCentavos     BigInt   @map("monto_centavos")
+  moneda            String   @default("BOB") @db.Char(3)
+  creadoEn          DateTime @default(now()) @map("creado_en") @db.Timestamptz(6)
+  // Sin @updatedAt: el webhook y la reconciliación actualizan con SQL explícito
+  // (ADR-0013). Lo mantiene un trigger BEFORE UPDATE en la migración.
+  actualizadoEn     DateTime @default(now()) @map("actualizado_en") @db.Timestamptz(6)
+
+  orden Orden @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+
+  // Un cobro, un pago: dos eventos distintos del mismo cobro (doc 05).
+  @@unique([proveedor, referenciaExterna])
+  // Reconciliación: EN_PROCESO cuyo creado_en supera el umbral del proveedor.
+  @@index([proveedor, creadoEn], map: "ix_pagos_en_proceso", where: raw("estado = 'EN_PROCESO'"))
+  @@map("pagos")
+}
+
+model WebhookEvento {
+  id              BigInt   @id @default(autoincrement())
+  proveedor       String
+  eventoExternoId String   @map("evento_externo_id")
+  tipo            String
+  recibidoEn      DateTime @default(now()) @map("recibido_en") @db.Timestamptz(6)
+  // Hash del cuerpo, nunca el cuerpo (doc 09 §7).
+  payloadSha256   String   @map("payload_sha256")
+
+  // Webhook procesado una vez: INSERT ... ON CONFLICT DO NOTHING (ADR-0004).
+  @@unique([proveedor, eventoExternoId])
+  @@map("webhook_eventos")
+}
+
+// ─── Entradas y validación en puerta (ADR-0011) ─────────────────────────────
+
+model Entrada {
+  // Va en el QR firmado: uuid no enumerable, sin datos personales.
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ordenId   String    @map("orden_id") @db.Uuid
+  asientoId String    @map("asiento_id") @db.Uuid
+  // EMITIDA USADA ANULADA
+  estado    String    @default("EMITIDA")
+  emitidaEn DateTime  @default(now()) @map("emitida_en") @db.Timestamptz(6)
+  usadaEn   DateTime? @map("usada_en") @db.Timestamptz(6)
+  usadaPor  String?   @map("usada_por") @db.Uuid
+
+  orden        Orden        @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+  asiento      Asiento      @relation(fields: [asientoId], references: [id], onDelete: Restrict)
+  validador    Usuario?     @relation("EntradaUsadaPor", fields: [usadaPor], references: [id], onDelete: Restrict)
+  validaciones Validacion[]
+
+  // RN-01, la invariante principal: una entrada válida por asiento. Índice
+  // único parcial: no usar findUnique por asientoId, puede haber varias
+  // ANULADAS (ADR-0016). Predicado en la forma normalizada de Postgres.
+  @@unique([asientoId], map: "ux_entrada_valida_por_asiento", where: raw("estado = ANY (ARRAY['EMITIDA'::text, 'USADA'::text])"))
+  // "Mis entradas" y generar el PDF.
+  @@index([ordenId])
+  @@map("entradas")
+}
+
+model Validacion {
+  id          BigInt   @id @default(autoincrement())
+  // NULL solo si el QR no corresponde a ninguna entrada (INVALIDA, test A-05).
+  entradaId   String?  @map("entrada_id") @db.Uuid
+  validadorId String   @map("validador_id") @db.Uuid
+  // VALIDA YA_USADA INVALIDA OTRO_EVENTO
+  resultado   String
+  en          DateTime @default(now()) @db.Timestamptz(6)
+
+  entrada   Entrada? @relation(fields: [entradaId], references: [id], onDelete: Restrict)
+  validador Usuario  @relation(fields: [validadorId], references: [id], onDelete: Restrict)
+
+  @@map("validaciones")
+}
+
+// ─── Outbox y emails (ADR-0005) ─────────────────────────────────────────────
+
+model Outbox {
+  id          BigInt    @id @default(autoincrement())
+  // ENTRADAS_EMITIDAS REEMBOLSO_REQUERIDO
+  tipo        String
+  // Solo IDs, sin datos personales.
+  payload     Json
+  creadoEn    DateTime  @default(now()) @map("creado_en") @db.Timestamptz(6)
+  // NULL = pendiente de publicar en BullMQ.
+  publicadoEn DateTime? @map("publicado_en") @db.Timestamptz(6)
+  intentos    Int       @default(0)
+
+  // Relay: solo las filas no publicadas.
+  @@index([id], map: "ix_outbox_pendientes", where: raw("publicado_en IS NULL"))
+  @@map("outbox")
+}
+
+model EnvioEmail {
+  ordenId        String  @map("orden_id") @db.Uuid
+  // ENTRADAS REEMBOLSO
+  tipo           String
+  // PENDIENTE ENVIADO FALLIDO
+  estado         String  @default("PENDIENTE")
+  proveedorMsgId String? @map("proveedor_msg_id")
+  intentos       Int     @default(0)
+
+  orden Orden @relation(fields: [ordenId], references: [id], onDelete: Restrict)
+
+  // Un email por orden y tipo: el reintento del Worker no duplica (doc 05).
+  @@id([ordenId, tipo])
+  @@map("envios_email")
+}
+
+// ─── Simulador de pagos (ADR-0015) ──────────────────────────────────────────
+// Tabla del módulo SimuladorPagos (solo local/demo). Sin relaciones a
+// propósito: simula un proveedor externo, que no ve nuestra base de datos.
+
+model SimuladorPago {
+  // sim_pay_...
+  referencia      String    @id
+  // Sin FK: el simulador es otro proveedor.
+  ordenId         String    @map("orden_id") @db.Uuid
+  montoCentavos   BigInt    @map("monto_centavos")
+  moneda          String    @default("BOB") @db.Char(3)
+  // OK RECHAZO DUPLICAR DEMORA DESORDEN MONTO_ERRONEO
+  modo            String
+  // PENDIENTE PAGADO RECHAZADO
+  estado          String    @default("PENDIENTE")
+  // Próximo envío del webhook. NULL = nada pendiente.
+  enviarEn        DateTime? @map("enviar_en") @db.Timestamptz(6)
+  intentosEntrega Int       @default(0) @map("intentos_entrega")
+  creadoEn        DateTime  @default(now()) @map("creado_en") @db.Timestamptz(6)
+
+  @@map("simulador_pagos")
 }
