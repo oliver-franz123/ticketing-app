@@ -15,6 +15,7 @@ La documentación completa vive en `docs/`. Las decisiones están en `docs/adr/`
 - Verificar con búsqueda web los datos que cambian (free tiers, regiones, pasarelas de pago). No darlos por supuestos.
 - Idioma: **español de Bolivia** (documentación, interfaz, emails, PDF).
 - Nunca usar `findUnique` sobre claves de índices únicos parciales (ver ADR-0016); usar `findFirst` con el filtro de estado.
+- Todo endpoint no público debe declarar `@Roles(...)` explícito. Sin `@Roles` solo se permite si el endpoint es para cualquier usuario autenticado, y se comenta por qué.
 
 ## Contexto de país: Bolivia
 
