@@ -5,6 +5,7 @@
     "outDir": "dist",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
+    "isolatedModules": true,
     "types": ["node", "jest"]
   },
   // Incluye los tests para que typecheck los revise. El build usa tsconfig.build.json.
