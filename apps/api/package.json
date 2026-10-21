@@ -8,8 +8,8 @@
     "dev": "nest start --watch --preserveWatchOutput",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "jest",
-    "test:e2e": "jest --config test/jest-e2e.json --runInBand"
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.config.e2e.mts"
   },
   "dependencies": {
     "@entradas/db": "*",
@@ -24,23 +24,10 @@
   "devDependencies": {
     "@nestjs/cli": "^12.0.8",
     "@nestjs/testing": "^12.1.3",
-    "@types/jest": "^30.0.0",
+    "@swc/core": "^1.16.18",
     "@types/supertest": "^7.2.1",
-    "jest": "^30.5.2",
     "supertest": "^7.3.1",
-    "ts-jest": "^29.4.15"
-  },
-  "jest": {
-    "rootDir": "src",
-    "testEnvironment": "node",
-    "testRegex": "\\.spec\\.ts$",
-    "transform": {
-      "^.+\\.ts$": "ts-jest"
-    },
-    "moduleFileExtensions": [
-      "ts",
-      "js",
-      "json"
-    ]
+    "unplugin-swc": "^2.0.0",
+    "vitest": "^4.1.2"
   }
 }
