@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
+import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
+import { HashService } from './hash.service';
 import { JwtGuard } from './jwt.guard';
 import { RolesGuard } from './roles.guard';
 import { leerSecretoJwt } from './secreto-jwt';
@@ -17,7 +20,10 @@ import { leerSecretoJwt } from './secreto-jwt';
       }),
     }),
   ],
+  controllers: [AuthController],
   providers: [
+    AuthService,
+    HashService,
     // Globales y en este orden: primero quién es (401), después qué puede hacer (403).
     { provide: APP_GUARD, useClass: JwtGuard },
     { provide: APP_GUARD, useClass: RolesGuard },

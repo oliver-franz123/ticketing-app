@@ -5,8 +5,10 @@ describe('HashService', () => {
   beforeAll(() => servicio.onModuleInit());
 
   it('usa argon2id con los parámetros mínimos de OWASP (19 MiB, t=2, p=1)', async () => {
-    const hash = await servicio.hashear('una-clave-larga');
-    expect(hash).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/);
+    const [, tipo, version, parametros] = (await servicio.hashear('una-clave-larga')).split('$');
+    expect([tipo, version]).toEqual(['argon2id', 'v=19']);
+    // El orden de los parámetros en el string depende de la versión de la librería.
+    expect(parametros.split(',').sort()).toEqual(['m=19456', 'p=1', 't=2']);
   });
 
   it('verifica la contraseña correcta y rechaza otra', async () => {
