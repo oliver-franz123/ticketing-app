@@ -1,0 +1,89 @@
+# CI (T2, doc 07 §7): lint, typecheck y tests contra Postgres 16 y Redis 7 reales.
+# El nombre del job es el status check que exige la protección de main.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Un push nuevo al mismo PR cancela la ejecución anterior.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: lint, typecheck y tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: entradas
+          POSTGRES_PASSWORD: entradas
+          POSTGRES_DB: entradas
+          TZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U entradas -d entradas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    # Todo apunta a los service containers. No hay .env en CI: dotenv no pisa
+    # estas variables y Nest las lee de process.env.
+    env:
+      NODE_ENV: test
+      TZ: UTC
+      DATABASE_URL: postgresql://entradas:entradas@localhost:5432/entradas
+      DIRECT_URL: postgresql://entradas:entradas@localhost:5432/entradas
+      REDIS_URL: redis://localhost:6379
+      # Secreto SOLO de prueba (≥ 32 bytes). Nunca un secreto real aquí.
+      JWT_SECRET: ci-secreto-de-prueba-no-usar-en-produccion-0123456789
+      JWT_EXPIRES_IN: 60m
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build de shared y db
+        run: npm run build -w @entradas/shared -w @entradas/db
+
+      - name: Migraciones
+        run: npm run db:deploy -w @entradas/db
+
+      - name: Esquema y migraciones coinciden
+        run: npm run db:check -w @entradas/db
+
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      - name: Tests unitarios
+        run: npm test
+
+      - name: Tests e2e
+        run: npm run test:e2e
