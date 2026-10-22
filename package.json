@@ -13,11 +13,15 @@
     "predev": "npm run build -w @entradas/shared -w @entradas/db",
     "dev": "concurrently --kill-others-on-fail --names shared,api,worker,web --prefix-colors yellow.bold,blue.bold,magenta.bold,green.bold \"npm run dev -w @entradas/shared\" \"npm run dev -w @entradas/api\" \"npm run dev -w @entradas/worker\" \"npm run dev -w @entradas/web\"",
     "build": "npm run build -w @entradas/shared -w @entradas/db && npm run build -w @entradas/api -w @entradas/worker -w @entradas/web --if-present",
-    "typecheck": "npm run build -w @entradas/shared -w @entradas/db && npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run build -w @entradas/shared -w @entradas/db && npm run typecheck --workspaces --if-present",
+    "lint": "eslint ."
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.20.5",
     "concurrently": "^10.0.6",
-    "typescript": "~6.0.3"
+    "eslint": "^10.13.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.0"
   }
 }
