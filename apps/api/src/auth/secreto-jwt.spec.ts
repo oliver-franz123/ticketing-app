@@ -9,7 +9,7 @@ describe('leerSecretoJwt', () => {
   afterAll(() => (process.env.JWT_SECRET = env));
 
   it('falla si falta', () => {
-    expect(() => leerSecretoJwt(config())).toThrow(/JWT_SECRET/);
+    expect(() => leerSecretoJwt(config())).toThrow(/OTRA_COSA/);
   });
 
   it('falla si está vacío', () => {
