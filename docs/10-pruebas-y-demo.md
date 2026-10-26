@@ -20,13 +20,13 @@ flowchart BT
 ### 2.1 Concurrencia (doc 04)
 | ID | Escenario | Resultado esperado |
 |---|---|---|
-| C-01 | 50 `reservar([F-12])` concurrentes (`Promise.all`, 50 conexiones distintas) | Exactamente **1** éxito y 49 conflictos. En BD: 1 orden PENDIENTE, F-12 RESERVADO con ese `orden_id` |
-| C-02 | Órdenes con asientos solapados {1,2,3} y {3,4,5} concurrentes, repetido 100 veces | En cada ronda una gana completa y la otra 409. **Nunca** reservas parciales |
-| C-03 | {1,2} y {2,1} concurrentes, 100 veces | Sin deadlock (el test falla si tarda > 5 s) |
+| C-01 | 50 `POST /ordenes` por F-12, de 50 compradores distintos, concurrentes | Exactamente **1** éxito y 49 conflictos. En BD: 1 orden PENDIENTE, F-12 RESERVADO con ese `orden_id` |
+| C-02 | Órdenes con asientos solapados {1,2,3} y {3,4,5} concurrentes, repetido 100 veces | En cada ronda **como mucho** una gana completa; con `SKIP LOCKED` pueden perder las dos (doc 04 §4.2). **Nunca** reservas parciales |
+| C-03 | {1,2} y {2,1} concurrentes, 100 veces | Sin deadlock (sin 500, el test falla si tarda > 5 s) y sin parciales. Medido: 1 a 3 rondas de cada 100 terminan con las dos en 409. Con `SKIP LOCKED` la reserva nunca espera un lock, así que este test no puede ponerse en rojo: es una guardia de regresión. El orden fijo lo prueba de verdad C-09 |
 | C-04 | Reserva con `expires_at` en el pasado (forzado por SQL) **sin** correr el job | Otra orden puede reservar el asiento (expiración perezosa) |
 | C-05 | El job `liberar-vencidas` corre en 2 procesos a la vez sobre 1.000 vencidos | Cada asiento se libera exactamente una vez. Los deltas publicados no se duplican en estado final |
-| C-06 | 20 reservas con la misma `Idempotency-Key` | 1 orden. Las 20 respuestas devuelven el mismo `ordenId` |
-| C-07 | Un usuario intenta una 2.ª orden pendiente en el mismo evento | 409 `ORDEN_PENDIENTE_EXISTENTE` |
+| C-06 | 20 reservas con la misma `Idempotency-Key` | 1 orden. Las 20 respuestas devuelven el mismo `ordenId`. Además: un reintento secuencial da el mismo cuerpo, la misma clave con otro pedido da 422, la clave es por usuario y un 409 no se guarda |
+| C-07 | Un usuario intenta una 2.ª orden pendiente en el mismo evento (también con dos peticiones concurrentes) | 409 `ORDEN_PENDIENTE_EXISTENTE`, sin tocar los asientos de la 2.ª |
 | C-08 | El usuario tiene una orden PENDIENTE_PAGO con `expires_at` en el pasado (forzado por SQL) y el job **no** corrió. Reserva de nuevo en el mismo evento | 201. La orden vieja queda EXPIRADA y la nueva PENDIENTE_PAGO: el índice de RN-04 no bloquea |
 | C-09 | La orden O1 venció con los asientos {1,2,3} y llega su webhook (re-captura en orden {1,2,3}) **al mismo tiempo** que una reserva nueva O2 pide {3,2,1}. Repetido 100 veces, más una variante con dos webhooks tardíos de órdenes que comparten asientos | **Ningún deadlock** (sin error `40P01`; el test falla si tarda > 5 s). En cada ronda hay un único dueño de los 3 asientos: si gana O1, O2 recibe 409; si gana O2, O1 queda REEMBOLSO_REQUERIDO. Nunca un reparto parcial |
 
@@ -83,7 +83,7 @@ flowchart BT
 | A-09 | Buscar datos personales en el QR decodificado | No hay email, nombre ni teléfono |
 
 ### 2.7 Latencia (medición, no aprobado/reprobado)
-- Script con autocannon o k6 contra `POST /reservas` sobre asientos **distintos** (para medir rendimiento, no contención): 50 req/s durante 60 s. Registrar p50/p95/p99 del lado del servidor (`http_request_duration_seconds`) y del cliente desde Cochabamba.
+- Script con autocannon o k6 contra `POST /ordenes` sobre asientos **distintos** (para medir rendimiento, no contención): 50 req/s durante 60 s. Registrar p50/p95/p99 del lado del servidor (`http_request_duration_seconds`) y del cliente desde Cochabamba.
 - Repetir sobre **un mismo asiento** caliente para medir la latencia del 409.
 - Comparar: API en `gru` vs. una prueba en `iad` (si hay tiempo), para justificar la región con datos.
 
@@ -111,6 +111,27 @@ En `apps/api/test/eventos.e2e-spec.ts` (Postgres real). Las fechas de los tests 
 | E-08 | Body con `estado`, `mapaVersion`, precio decimal o fecha sin zona horaria | 400 |
 | L-01..L-05 | `GET /eventos`: público, `Cache-Control: public, max-age=30`, filtro por ciudad, solo el estado pedido (PUBLICADO por defecto), BORRADOR → 400, orden por `inicio`, paginación (`porPagina` ≤ 50) y fechas en UTC | Ver el test |
 | M-01..M-03 | `GET /eventos/:id/asientos`: público, zonas con precio en centavos, orden A1, A2… Z2, AA1, un asiento `NO_DISPONIBLE` se ve así. BORRADOR o inexistente → el mismo 404. Id que no es UUID → 400 | Ver el test |
+| E-09 | `PATCH /eventos/:id/publicar` sin token / como COMPRADOR o VALIDADOR | 401 / 403. Sigue BORRADOR |
+| E-10 | El ORGANIZADOR dueño publica | 200, PUBLICADO, y el mapa pasa de 404 a 200 |
+| E-11 | Un ADMIN publica el evento de otro organizador | 200 |
+| E-12 | El ORGANIZADOR B publica el de A / id inexistente / id que no es UUID | El mismo 404 / 404 / 400. Sigue BORRADOR |
+| E-13 | Publicar dos veces / dos `PATCH` concurrentes / publicar un CANCELADO | 409 / exactamente un 200 y un 409 / 409 |
+
+### 2.9 Reservas (semana 3)
+
+En `apps/api/test/ordenes.e2e-spec.ts` (Postgres real). Además de C-01..C-04 y C-06..C-08 (§2.1):
+
+| ID | Escenario | Resultado esperado |
+|---|---|---|
+| O-01 | Reserva de 2 asientos | 201. Total = 2 × precio de la zona, `orden_items` con el precio congelado, `expiresAt` = `now()` de Postgres + `RESERVA_TTL_SEGUNDOS`, igual en la orden y en sus asientos |
+| O-02 | Sin token / como ORGANIZADOR, VALIDADOR o ADMIN | 401 / 403 |
+| O-03 | Sin `Idempotency-Key` o que no es UUID; `asientoIds` vacío, con 7, repetidos o que no son UUID; sin `eventoId`; `totalCentavos` mandado por el cliente | 400 y ninguna orden |
+| O-04 | Evento inexistente o BORRADOR | El mismo 404 y el asiento sigue LIBRE |
+| O-05 | Asiento de otro evento / NO_DISPONIBLE | 409 `ASIENTOS_NO_DISPONIBLES` |
+| O-06 | Todo o nada: {libre, ocupado} | 409 solo con el ocupado (sin decir de quién). El libre sigue LIBRE con su `version` y no queda ninguna orden |
+| O-07 | Evento CANCELADO o FINALIZADO / `venta_inicio` futura / el evento ya empezó (RN-09) | 409 `EVENTO_NO_DISPONIBLE` / `VENTA_NO_ABIERTA` / `VENTA_CERRADA` |
+
+**Cómo se arma una carrera de verdad en el test.** El test y la API comparten el event loop. En la primera versión, con `supertest` y el pool de Postgres frío, la primera petición llegaba sola: las demás esperaban a abrir su conexión TCP y su conexión a Postgres, de ~10 ms cada una. Así, **la versión ingenua (SELECT y después UPDATE) pasaba C-01**. Ahora la carrera usa `fetch` con conexiones keep-alive ya abiertas y el pool lleno antes de disparar. Con eso la versión ingenua falla, con **10 ganadores de 50** (uno por conexión del pool), y el UPDATE condicional da 1 y 49 en 10 de 10 corridas. **Lección:** un test de concurrencia que nunca se vio en rojo no prueba nada.
 
 ## 3. Guion de la demo en vivo (≈ 12 min)
 
@@ -128,7 +149,7 @@ En `apps/api/test/eventos.e2e-spec.ts` (Postgres real). Las fechas de los tests 
 | 10–11 | **Puerta** | Escanear el QR desde el celular: VÁLIDA, y de nuevo: YA USADA 21:04 | CAS en la validación |
 | 11–12 | Cierre | Tabla del doc 06 §8: demo vs. producción | Honestidad sobre la escala |
 
-**Script `carrera.js` (descripción, se implementa en la semana 2):** usa **50 usuarios distintos** (creados para la prueba o con 50 tokens pre-generados), así el límite por usuario (10/min) no interviene. Como todas las peticiones salen de la misma IP, el entorno debe tener `RATE_LIMIT_RESERVAS_IP` ≥ 100/min. Además, dispara 50 `POST /reservas` en paralelo con `Promise.allSettled`, cuenta los códigos HTTP e imprime una tabla. Luego consulta `GET /asientos` y verifica que F-12 tenga **un** `orden_id`. Debe correr tanto en local como contra producción.
+**Script `carrera.js` (descripción, se implementa en la semana 2):** usa **50 usuarios distintos** (creados para la prueba o con 50 tokens pre-generados), así el límite por usuario (10/min) no interviene. Como todas las peticiones salen de la misma IP, el entorno debe tener `RATE_LIMIT_RESERVAS_IP` ≥ 100/min. Además, dispara 50 `POST /ordenes` en paralelo con `Promise.allSettled`, cuenta los códigos HTTP e imprime una tabla. Luego consulta `GET /asientos` y verifica que F-12 tenga **un** `orden_id`. Debe correr tanto en local como contra producción.
 
 ## 4. Definición de "hecho" (DoD) para cada historia
 - [ ] Tests (unitarios o de integración) en verde en CI.

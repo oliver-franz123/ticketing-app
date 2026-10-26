@@ -29,7 +29,7 @@
 | **Fencing token** | Número creciente que protege contra dueños de locks vencidos | Por qué Redlock no basta sin la BD |
 | **Fuente de verdad** | El sistema cuyo dato es el oficial | Postgres |
 | **Idempotencia** | Repetir una operación tiene el mismo efecto que hacerla una vez | Webhook duplicado → 1 entrada |
-| **Idempotency-Key** | Clave enviada por el cliente para deduplicar reintentos | UUID en `POST /reservas` |
+| **Idempotency-Key** | Clave enviada por el cliente para deduplicar reintentos | UUID en `POST /ordenes` |
 | **Jitter** | Aleatoriedad añadida a los tiempos de espera | Reconexión de 1 s ± 30 % |
 | **JWT** | Token firmado que lleva datos (`sub`, `rol`, `exp`) | `Authorization: Bearer ...` |
 | **Lease** | Propiedad temporal que vence sola | Reserva de 5 minutos |

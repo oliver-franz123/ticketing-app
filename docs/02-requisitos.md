@@ -25,7 +25,7 @@ Notación: **RF** funcional · **RNF** no funcional · **RN** regla de negocio. 
 | RF-20 | Crear y editar un recinto (nombre, dirección, ciudad). | M |
 | RF-21 | Crear un evento en BORRADOR con título, recinto, fecha/hora local y fecha de apertura de venta. | M |
 | RF-22 | Configurar zonas con su precio (centavos) y una grilla de filas × columnas, con asientos deshabilitables (pasillos). | M |
-| RF-23 | Publicar el evento. Las filas `asientos` se generan **al crear** el evento (en la misma transacción, todas LIBRE). Al publicar, el mapa queda congelado y ya no se puede editar. | M |
+| RF-23 | Publicar el evento. Las filas `asientos` se generan **al crear** el evento (en la misma transacción, todas LIBRE). Al publicar (`PATCH /eventos/:id/publicar`, BORRADOR → PUBLICADO sin vuelta atrás), el mapa queda congelado y ya no se puede editar: el congelamiento es **por estado**, así que todo endpoint que edite zonas o asientos tiene que exigir `estado = 'BORRADOR'`. | M |
 | RF-24 | Ver el resumen de ventas: vendidos, reservados, libres y recaudación. | S |
 
 ### Compra
