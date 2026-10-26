@@ -1,4 +1,5 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import type { Prisma } from '@entradas/db';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type { UsuarioAutenticado } from '../auth/tipos';
@@ -48,7 +49,9 @@ export class OrdenesService {
   // nivel por defecto: la correctitud la da el UPDATE condicional, no el aislamiento.
   // maxWait: en una carrera, 50 transacciones esperan una de las 10 conexiones del pool.
   crear(usuario: UsuarioAutenticado, clave: string, datos: CrearOrdenDto) {
-    const { eventoId, asientoIds } = datos;
+    // Postgres devuelve los uuid en minúsculas: se normaliza para comparar con lo pedido.
+    const eventoId = datos.eventoId.toLowerCase();
+    const asientoIds = datos.asientoIds.map((id) => id.toLowerCase());
     const ordenId = randomUUID();
 
     return this.prisma.$transaction(
@@ -72,6 +75,10 @@ export class OrdenesService {
         // El total sale del precio de cada zona al reservar (RN-05). COALESCE: si
         // ningún asiento es del evento, sum da NULL; con 0 se inserta y el paso 2
         // hace el ROLLBACK con 409.
+        // ON CONFLICT DO NOTHING (sin columnas) cubre las dos claves únicas:
+        // UNIQUE(usuario_id, idempotency_key) y el índice parcial de RN-04. Si otra
+        // transacción acaba de insertar la misma clave, Postgres espera a que
+        // termine antes de decidir: así 20 reintentos simultáneos crean una sola orden.
         const [orden] = await tx.$queryRaw<OrdenInsertada[]>`
           INSERT INTO ordenes (id, usuario_id, evento_id, estado, expires_at, extension_usada,
                                idempotency_key, total_centavos, moneda, nit, razon_social)
@@ -81,7 +88,9 @@ export class OrdenesService {
                               FROM asientos a JOIN zonas z ON z.id = a.zona_id
                              WHERE a.evento_id = ${eventoId}::uuid AND a.id = ANY(${asientoIds}::uuid[])), 0),
                   'BOB', ${datos.nit ?? null}, ${datos.razonSocial ?? null})
+          ON CONFLICT DO NOTHING
           RETURNING id, expires_at, total_centavos`;
+        if (!orden) return this.resolverConflicto(tx, usuario, clave, eventoId, asientoIds);
 
         // 2. Tomar los asientos (UPDATE condicional en Inventario).
         const tomados = await this.inventario.reservar(tx, {
@@ -104,17 +113,74 @@ export class OrdenesService {
           FROM asientos a JOIN zonas z ON z.id = a.zona_id
           WHERE a.id = ANY(${tomados}::uuid[])`;
 
-        return {
-          ordenId,
+        return respuesta({
+          id: ordenId,
           eventoId,
           estado: 'PENDIENTE_PAGO',
-          asientoIds: [...tomados].sort(),
-          totalCentavos: aNumero(orden.total_centavos),
+          asientoIds: tomados,
+          totalCentavos: orden.total_centavos,
           moneda: 'BOB',
           expiresAt: orden.expires_at,
-        };
+        });
       },
       { maxWait: 5000, timeout: 5000 },
     );
   }
+
+  // El INSERT chocó con una clave única. Si este usuario ya tiene una orden con
+  // esa clave, es un reintento: se devuelve la misma orden, con su estado
+  // actual. Si no, el choque fue con RN-04. Solo se guardan los éxitos: un 409
+  // hizo ROLLBACK, así que reintentar con la misma clave vuelve a intentar.
+  private async resolverConflicto(
+    tx: Prisma.TransactionClient,
+    usuario: UsuarioAutenticado,
+    clave: string,
+    eventoId: string,
+    asientoIds: string[],
+  ) {
+    // (usuario_id, idempotency_key) es un UNIQUE total, no parcial: findUnique
+    // es correcto aquí (ADR-0016).
+    const previa = await tx.orden.findUnique({
+      where: { usuarioId_idempotencyKey: { usuarioId: usuario.id, idempotencyKey: clave } },
+      include: { items: { select: { asientoId: true } } },
+    });
+    if (!previa) {
+      throw conflicto('ORDEN_PENDIENTE_EXISTENTE', 'Ya tiene una reserva pendiente en este evento');
+    }
+
+    const asientosPrevios = previa.items.map((i) => i.asientoId);
+    if (previa.eventoId !== eventoId || !mismosElementos(asientosPrevios, asientoIds)) {
+      throw new UnprocessableEntityException({
+        statusCode: 422,
+        error: 'Unprocessable Entity',
+        codigo: 'IDEMPOTENCY_KEY_REUTILIZADA',
+        message: 'La Idempotency-Key ya se usó para otra reserva',
+      });
+    }
+    return respuesta({ ...previa, asientoIds: asientosPrevios });
+  }
+}
+
+const mismosElementos = (a: string[], b: string[]) =>
+  a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
+// Misma forma para la reserva nueva y para el reintento: el cliente no las distingue.
+function respuesta(orden: {
+  id: string;
+  eventoId: string;
+  estado: string;
+  asientoIds: string[];
+  totalCentavos: bigint;
+  moneda: string;
+  expiresAt: Date;
+}) {
+  return {
+    ordenId: orden.id,
+    eventoId: orden.eventoId,
+    estado: orden.estado,
+    asientoIds: [...orden.asientoIds].sort(),
+    totalCentavos: aNumero(orden.totalCentavos),
+    moneda: orden.moneda,
+    expiresAt: orden.expiresAt,
+  };
 }

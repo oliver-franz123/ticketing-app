@@ -134,6 +134,91 @@ describe('Órdenes: reserva de asientos', () => {
     });
   });
 
+  describe('C-06: Idempotency-Key', () => {
+    it('20 peticiones concurrentes con la misma clave → 20 × 201 con el mismo ordenId y 1 sola orden', async () => {
+      const evento = await eventoALaVenta();
+      const [usuario] = await fx.crearCompradores(1);
+      const clave = randomUUID();
+      const body = { eventoId: evento.id, asientoIds: [evento.asientos[0], evento.asientos[1]] };
+
+      const respuestas = await carrera(Array.from({ length: 20 }, () => ({ usuario, body, clave })));
+
+      expect(respuestas.map((r) => r.status)).toEqual(Array(20).fill(201));
+      expect(new Set(respuestas.map((r) => r.body.ordenId)).size).toBe(1);
+      expect(await prisma.orden.count({ where: { usuarioId: usuario.id } })).toBe(1);
+      expect(await prisma.ordenItem.count({ where: { ordenId: respuestas[0].body.ordenId } })).toBe(2);
+    });
+
+    it('un reintento secuencial devuelve exactamente el mismo cuerpo', async () => {
+      const evento = await eventoALaVenta();
+      const [usuario] = await fx.crearCompradores(1);
+      const clave = randomUUID();
+      // Mismos asientos en otro orden: es el mismo pedido.
+      const primero = await reservar(
+        usuario,
+        { eventoId: evento.id, asientoIds: [evento.asientos[0], evento.asientos[1]] },
+        clave,
+      ).expect(201);
+
+      const reintento = await reservar(
+        usuario,
+        { eventoId: evento.id, asientoIds: [evento.asientos[1], evento.asientos[0]] },
+        clave,
+      ).expect(201);
+
+      expect(reintento.body).toEqual(primero.body);
+      expect(await prisma.orden.count({ where: { usuarioId: usuario.id } })).toBe(1);
+    });
+
+    it('la misma clave con otros asientos → 422 IDEMPOTENCY_KEY_REUTILIZADA y no toca nada', async () => {
+      const evento = await eventoALaVenta();
+      const [usuario] = await fx.crearCompradores(1);
+      const clave = randomUUID();
+      await reservar(usuario, { eventoId: evento.id, asientoIds: [evento.asientos[0]] }, clave).expect(201);
+
+      const res = await reservar(usuario, { eventoId: evento.id, asientoIds: [evento.asientos[1]] }, clave).expect(422);
+
+      expect(res.body.codigo).toBe('IDEMPOTENCY_KEY_REUTILIZADA');
+      expect((await prisma.asiento.findUniqueOrThrow({ where: { id: evento.asientos[1] } })).estado).toBe('LIBRE');
+    });
+
+    it('la misma clave en otro evento → 422', async () => {
+      const [evento, otro] = [await eventoALaVenta(), await eventoALaVenta()];
+      const [usuario] = await fx.crearCompradores(1);
+      const clave = randomUUID();
+      await reservar(usuario, { eventoId: evento.id, asientoIds: [evento.asientos[0]] }, clave).expect(201);
+
+      await reservar(usuario, { eventoId: otro.id, asientoIds: [otro.asientos[0]] }, clave).expect(422);
+      expect(await prisma.orden.count({ where: { usuarioId: usuario.id } })).toBe(1);
+    });
+
+    it('la clave es por usuario: otro comprador con la misma clave tiene su propia orden', async () => {
+      const evento = await eventoALaVenta();
+      const [ana, beto] = await fx.crearCompradores(2);
+      const clave = randomUUID();
+      const deAna = await reservar(ana, { eventoId: evento.id, asientoIds: [evento.asientos[0]] }, clave).expect(201);
+
+      const deBeto = await reservar(beto, { eventoId: evento.id, asientoIds: [evento.asientos[1]] }, clave).expect(201);
+
+      expect(deBeto.body.ordenId).not.toBe(deAna.body.ordenId);
+    });
+
+    it('un 409 no se guarda: reintentar con la misma clave vuelve a intentar la reserva', async () => {
+      const evento = await eventoALaVenta();
+      const [ana, beto] = await fx.crearCompradores(2);
+      const asiento = evento.asientos[0];
+      const deAna = await reservar(ana, { eventoId: evento.id, asientoIds: [asiento] }).expect(201);
+      const clave = randomUUID();
+      await reservar(beto, { eventoId: evento.id, asientoIds: [asiento] }, clave).expect(409);
+
+      // Ana pierde la reserva (simulado: la orden y el asiento vencen).
+      await prisma.$executeRaw`UPDATE ordenes SET expires_at = now() - interval '1 second' WHERE id = ${deAna.body.ordenId}::uuid`;
+      await prisma.$executeRaw`UPDATE asientos SET expires_at = now() - interval '1 second' WHERE id = ${asiento}::uuid`;
+
+      await reservar(beto, { eventoId: evento.id, asientoIds: [asiento] }, clave).expect(201);
+    });
+  });
+
   describe('RN-09 y estado del evento', () => {
     // Fechas y estados forzados con Prisma: el DTO de POST /eventos no deja
     // crear un evento en el pasado.
