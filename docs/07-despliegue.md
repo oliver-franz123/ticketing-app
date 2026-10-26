@@ -176,6 +176,7 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 | `CORS_ORIGINS` | api | `https://<proyecto>.vercel.app` (opcional: `https://app.<dominio>`) | No |
 | `RATE_LIMIT_RESERVAS_IP` | api | `30` reservas/min por IP; **≥ `100` en el entorno de demo** (la carrera sale de una sola IP) | No |
 | `RESERVA_TTL_SEGUNDOS` | api | `300` (en tests: `5`) | No |
+| `SEED_PASSWORD` | `npm run seed` (local) | Contraseña de los 4 usuarios de prueba. **No va a Fly.** El script se niega a correr con `NODE_ENV=production` o contra Supabase salvo con `--permitir-remota` | ✅ |
 | `TZ_DISPLAY` | api, worker, frontend | `America/La_Paz` | No |
 | `NEXT_PUBLIC_API_URL` | frontend | `https://<app-api>.fly.dev` (opcional: `https://api.<dominio>`) | No |
 | `NEXT_PUBLIC_WS_URL` | frontend | `wss://<app-api>.fly.dev` (opcional: `wss://api.<dominio>`) | No |
