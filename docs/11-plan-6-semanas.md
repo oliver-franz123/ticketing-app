@@ -114,7 +114,7 @@ gantt
 |---|---|---|---|
 | Free tiers que cambian o Supabase pausado el día de la demo | Media | Alto | Verificar en la semana 1 y el día anterior. Plan C local ensayado |
 | Fly pide tarjeta o el costo supera lo previsto | Media | Medio | Plan B Railway (US$5). Alertas de gasto. Apagar máquinas fuera de las semanas de demo |
-| El pooler de Supabase en modo transacción + Prisma da problemas (prepared statements) | Media | Medio | `pgbouncer=true` en la URL. Probarlo **en la semana 1**, no en la 5 |
+| El pooler de Supabase en modo transacción + Prisma da problemas (prepared statements) | Baja (T6, 26/10/2026) | Medio | **Probado en T6: sin problemas.** Transaction pooler (`:6543`) con PostgreSQL 17.11, Prisma 7 + `@prisma/adapter-pg`, desde local. Las 4 pruebas OK (ver nota debajo). `PrismaService` **no se modificó**: no hubo problemas de compatibilidad. El adaptador `pg` usa sentencias preparadas sin nombre, compatibles con el modo transacción; `pgbouncer=true` era un parámetro del motor en Rust y aquí no aplica. Si algo falla más adelante: tamaño del pool con `max`, `transactionOptions` y CA de Supabase para SSL |
 | La concurrencia "funciona en local" pero no en el despliegue | Baja | Alto | `carrera.js` contra Fly desde la semana 2 |
 | Un integrante se enferma o abandona | Media | Alto | Slices verticales completos (nada queda a medias en capas). Revisión cruzada para que otro sepa continuar |
 | La cuota de Resend (100/día) se agota en los ensayos | Media | Bajo | Mailpit en local y Resend solo en el entorno desplegado. Pocos emails reales |
@@ -122,6 +122,19 @@ gantt
 | El mapa es lento en celulares de gama baja | Media | Medio | Canvas/SVG simple. Probar en el celular más viejo del equipo en la semana 3 |
 | Stripe (opcional) no permite abrir la cuenta de test desde Bolivia, o sus webhooks no llegan en local | Media | Bajo | El simulador es el proveedor principal y la demo no depende de Stripe. Si se usa Stripe: prueba T11 en la semana 1 y `stripe listen` en local |
 | Alcance demasiado grande | Alta | Alto | Plan de recorte (abajo) |
+
+**Resultado de T6 (26/10/2026), con un script desechable contra el Transaction pooler de Supabase:**
+
+| Prueba | Resultado |
+|---|---|
+| Lectura simple: `departamento.count()` | ✅ Devuelve `0` |
+| `$transaction` interactiva (2 operaciones) | ✅ Las dos operaciones compartieron la misma transacción y la misma conexión (`mismoPid: true`). El `SET LOCAL` de la primera se leyó en la segunda y desapareció después del `COMMIT` |
+| `$transaction` por lotes (2 operaciones) | ✅ `departamentos: 0`, `ciudades: 0` |
+| `$queryRaw` parametrizado | ✅ El parámetro volvió igual (`eco: 'T6'`) |
+| Resultado final | ✅ `T6: todo OK`, código de salida 0 |
+
+- **Los conteos en 0 son esperables:** todavía no hay datos sembrados en esas tablas (las semillas son T7). Las pruebas confirman que las tablas existen y responden a través del pooler, no que tengan datos.
+- **Alcance de T6:** solo validó que las transacciones y las consultas se comportan bien a través del pooler. **No demuestra todavía que se eviten las compras duplicadas.** Eso lo prueban el test C-01 y la carrera de 50 → 1 (`carrera.js`, semana 2), primero en local y después contra Fly.
 
 ## 4. Plan de recorte (si falta tiempo)
 

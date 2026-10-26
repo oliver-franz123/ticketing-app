@@ -10,6 +10,8 @@ next-env.d.ts
 # Variables de entorno (se versiona solo .env.example)
 .env
 .env.local
+# URLs de Supabase para migrar y probar desde local (T6), aparte del .env local
+.env.supabase
 
 # Logs y sistema
 npm-debug.log*

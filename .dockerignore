@@ -1,0 +1,22 @@
+# Contexto de build = raíz del monorepo (apps/api/Dockerfile). Solo entra lo
+# que la imagen de la api necesita.
+.git
+.github
+docs
+**/node_modules
+**/dist
+**/.next
+**/*.tsbuildinfo
+packages/db/src/generated
+
+# Secretos: nunca dentro de la imagen
+.env
+.env.*
+**/.env
+**/.env.*
+
+# De web y worker solo el package.json (npm ci lo exige por el lockfile)
+apps/web/*
+!apps/web/package.json
+apps/worker/*
+!apps/worker/package.json
