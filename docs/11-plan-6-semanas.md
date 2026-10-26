@@ -75,7 +75,7 @@ gantt
 | **Test C-01 primero (rojo)** con una implementación ingenua y después el UPDATE condicional (verde). C-02, C-03, C-06 y C-07 | A | Los tests corren en CI |
 | `POST /reservas` con `Idempotency-Key` y `DELETE /ordenes/:id` | A | — |
 | Script `carrera.js` (50 → 1) | A | Corre contra local y contra Fly |
-| Panel organizador: recinto, evento, zonas, grilla y publicar | C | Publicar genera las filas `asientos` |
+| Panel organizador: recinto, evento, zonas, grilla y publicar | C | `POST /eventos` genera las filas `asientos` en la misma transacción (máx. 15.000 por zona). Publicar congela el mapa |
 | Listado por ciudad + detalle + mapa (snapshot REST, sin tiempo real aún) con selección y reserva | B | Comprar el flujo "hasta reservar" en el celular |
 
 **Hito de la semana 2:** la demo de la carrera **ya funciona**. Si el proyecto se cayera aquí, el núcleo está demostrado.

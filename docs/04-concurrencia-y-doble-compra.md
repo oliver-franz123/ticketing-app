@@ -7,7 +7,7 @@
 
 ```mermaid
 stateDiagram-v2
-    [*] --> LIBRE: evento publicado
+    [*] --> LIBRE: evento creado (grilla en la misma transacción)
     LIBRE --> RESERVADO: reservar() gana el UPDATE condicional
     RESERVADO --> LIBRE: cancelar() / expira (job o perezosa)
     RESERVADO --> VENDIDO: webhook OK, re-captura (sigue con su orden_id, o reserva ajena vencida)
