@@ -1,6 +1,6 @@
 # 07 — Despliegue
 
-> **Datos verificados el 16/10/2026** con las páginas oficiales de cada proveedor (fuentes al final). Los free tiers cambian seguido: **vuelvan a verificarlos en la semana 1**.
+> **Datos verificados el 16/10/2026** con las páginas oficiales de cada proveedor (fuentes al final). **Fly.io y Vercel se volvieron a verificar el 26/10/2026 (T3)**: los precios de Fly en `gru` resultaron más altos de lo estimado (ver §3 y §4).
 > **Presupuesto acordado:** hasta ~US$5–10/mes durante las semanas de demo.
 
 ## 1. Diagrama de despliegue
@@ -51,6 +51,8 @@ flowchart TB
     style STR stroke-dasharray: 5 5
 ```
 
+> **Estado en la semana 1 (T3):** en Fly corre **una sola máquina `api`** (256 MB). El Worker, Redis y la segunda instancia de la API del diagrama se suman en las semanas 3 y 4, después de revisar el presupuesto (§4).
+
 ## 2. Regiones más cercanas a Bolivia (verificado)
 
 | Servicio | ¿Tiene Sudamérica? | Región elegida | Comentario |
@@ -63,7 +65,14 @@ flowchart TB
 | **Upstash** | No confirmado en la página de precios | — | No pudimos verificar `sa-east-1`. Ver la consola |
 | **Resend** | N/A (API) | — | La latencia del email no importa: es asíncrono |
 
-**Por qué importa la región:** la latencia de red desde Bolivia a São Paulo suele ser bastante menor que a Virginia (EE. UU.). **Mídanla** desde Cochabamba con `curl -w "%{time_connect}"` contra cada región en la semana 1 y anoten el resultado aquí. Cada reserva, cada delta del WS y cada reconexión pagan esa latencia de ida y vuelta.
+**Por qué importa la región:** la latencia de red desde Bolivia a São Paulo suele ser bastante menor que a Virginia (EE. UU.). **Mídanla** desde Cochabamba en la semana 1 con el procedimiento de §10.4 y anoten el resultado aquí y en doc 10.
+
+| Medición (mediana de 20, desde Cochabamba) | Fibra/wifi | 4G |
+|---|---|---|
+| RTT TCP al edge de Fly (`time_connect`) | ___ ms | ___ ms |
+| Petición completa a `gru` (`time_starttransfer − time_appconnect`) | ___ ms | ___ ms |
+| Región del edge (sufijo de `fly-request-id`) | ___ | ___ |
+ Cada reserva, cada delta del WS y cada reconexión pagan esa latencia de ida y vuelta.
 
 Más importante todavía: **API y BD en la misma región.** Una reserva hace 2–4 consultas. Si la API está en Virginia y la BD en São Paulo, cada consulta cruza el continente.
 
@@ -71,8 +80,8 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 
 | Proveedor | Plan | Qué incluye (oficial) | Trampa para nuestro caso |
 |---|---|---|---|
-| **Vercel** | Hobby (gratis) | 100 GB de transferencia, 1M de invocaciones, duración máx. de 300 s | **Solo uso personal no comercial.** Cobrar a visitantes = uso comercial. Sirve para el proyecto universitario. Producción necesita Pro |
-| **Fly.io** | Pago por uso | **Sin free tier para organizaciones nuevas.** Prueba de 2 h de máquina o 7 días | Requiere tarjeta. Costo estimado: 3–4 máquinas pequeñas siempre encendidas + volumen de 1 GB. **Calculen con la calculadora de Fly** (estimamos ~US$5–10/mes) |
+| **Vercel** | Hobby (gratis) | 100 GB de transferencia, 1M de invocaciones, 4 h de CPU activa, duración máx. de 300 s (re-verificado 26/10/2026) | **Solo uso personal no comercial.** Cobrar a visitantes = uso comercial. Sirve para el proyecto universitario. Producción necesita Pro. No está documentado si Hobby puede elegir `gru1`: hoy la web es estática y no le afecta |
+| **Fly.io** | Pago por uso | **Sin free tier ni crédito mensual para organizaciones nuevas.** Prueba de 2 h de máquina o 7 días. **No hay tope de gasto.** (re-verificado 26/10/2026) | Requiere tarjeta. `gru` cuesta **1,615×** el precio de Ashburn: `shared-cpu-1x` 256 MB = **US$3,54/mes** (Ashburn US$2,19). 512 MB en `gru` ≈ US$5,96 (cálculo propio con el multiplicador; Fly no lo publica). IPv4 compartida e IPv6 gratis; IPv4 dedicada US$2/mes. Salida a Internet desde Sudamérica US$0,04/GB. Volúmenes US$0,15/GB/mes |
 | **Supabase** | Free | 500 MB de BD, 5 GB de egress, **2 proyectos activos**, región São Paulo | **Se pausa tras 1 semana de inactividad.** Entrar al panel antes de la demo. Free no lista límites de conexiones directas: usar el pooler |
 | **Railway** | Trial / Free / Hobby | Trial: US$5 únicos. Free: US$1/mes (0,5 GB RAM por servicio). Hobby: US$5/mes con US$5 de uso incluido | Sin región en Sudamérica. El Free de US$1 no alcanza para API + Worker + Redis 24/7 |
 | **Render** | Free | 750 h/mes por workspace. Se duerme tras 15 min sin tráfico (incluye mensajes WS). Arranque de ~1 min. Postgres gratis de 1 GB que **expira a los 30 días**. Key Value en memoria (**pierde datos al reiniciar**) | Sin workers gratis. Un arranque en frío de ~1 min en plena demo es fatal |
@@ -98,6 +107,17 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 - Redis en Fly dentro de la **red privada**: sin límites por comando (BullMQ consume en reposo), sin exponer Redis a Internet y con latencia mínima.
 - Varias máquinas de la API en una línea (`fly scale count 2`): demostramos el WebSocket multi-instancia de verdad.
 - La opción 3 se descarta: los arranques en frío de Render, la cuota de comandos de Upstash y un Worker en la laptop de alguien hacen la demo frágil.
+
+**Lo que cambió respecto a lo asumido (26/10/2026):** estimamos la arquitectura completa en ~US$5–10/mes, pero con los precios reales de `gru`:
+
+| Configuración | US$/mes aprox. |
+|---|---|
+| **T3 (semana 1):** 1 × api 256 MB, siempre encendida, sin IP dedicada | **~3,6** |
+| Arquitectura de §1: api + worker + redis (3 × 256 MB) + volumen de 1 GB | ~10,8 |
+| La misma con 2 instancias de la API (demo multi-instancia) | ~14,3 |
+
+- **T3 entra holgada en el presupuesto.** La arquitectura completa **lo supera**, y eso hay que decidirlo antes de la semana 3 (no en T3). Opciones que conviene evaluar: la segunda instancia de la API solo durante los ensayos y la demo (`fly scale count 2` y después `1`, se paga por segundo); `auto_stop_machines = "suspend"` en las semanas sin demo; o sumar el Worker solo cuando haya jobs reales (semana 4).
+- **Fly no tiene tope de gasto:** revisen el panel de facturación cada semana y configuren alertas de uso si la cuenta lo permite.
 
 **Plan B (Railway):** misma arquitectura, región US East. Interfaz más simple y plantilla de Redis. Costo fijo de US$5 con US$5 de uso incluido. Se paga con latencia mayor desde Bolivia.
 
@@ -162,6 +182,10 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 
 Reglas: los secretos van en `fly secrets set` / Vercel Env / GitHub Secrets, **nunca** en el repo. Se versiona un `.env.example` sin valores. El servidor corre con `TZ=UTC`.
 
+- **`DIRECT_URL` nunca va a Fly.** Las migraciones corren en CI **antes** de `fly deploy` (§7), no con un `release_command`. La imagen no lleva el CLI de Prisma y la API en runtime solo conoce el pooler en modo transacción.
+- **`JWT_SECRET` de producción es propio**, distinto del local y del de CI. Se genera dentro del mismo comando para que no quede en pantalla ni en archivos: `fly secrets set JWT_SECRET="$(openssl rand -base64 32)"`.
+- Las variables que no son secretas (`NODE_ENV`, `CORS_ORIGINS`, `API_PUBLIC_URL`...) están en la sección `[env]` de `fly.api.toml`, versionadas.
+
 ## 7. CI/CD con GitHub Actions
 
 ```mermaid
@@ -209,15 +233,86 @@ Servicios del entorno local (se definen en la semana 1):
   - `cola_jobs{cola, estado}` · `ws_conexiones{instancia}` · `http_request_duration_seconds`
 - **Panel de demo:** página `/admin/demo` en el frontend que consulta `/metrics` cada 2 s y muestra contadores grandes. Grafana **no aporta lo suficiente** para el esfuerzo en 6 semanas: es opcional si sobra tiempo.
 
-## 10. Fuentes (consultadas el 16/10/2026)
+## 10. Despliegue de T3 (semana 1)
+
+**Problema:** publicar `GET /health` en `*.fly.dev` y la web en `*.vercel.app`, con el menor costo posible y sin que el primer deploy falle por causas ajenas a Fly.
+
+**Archivos:** `apps/api/Dockerfile` (contexto = raíz del monorepo), `.dockerignore`, `fly.api.toml` (raíz) y `apps/web/vercel.json`.
+
+### 10.1 Imagen y máquina
+
+- **Dockerfile multi-stage** sobre `node:22-bookworm-slim` (glibc: los binarios precompilados de argon2 se prueban sobre todo ahí). Construye en el mismo orden que el build de la raíz, **shared → db (`prisma generate` + `tsc`) → api**, y la imagen final copia solo los `dist` y las dependencias de runtime.
+- **Trampa encontrada:** `npm ci --omit=dev` igual instalaba el CLI de `prisma`, `typescript` y `effect` (~270 MB). En el lockfile figuran como `devOptional` (dev en `db` y peer opcional de `@prisma/client`), y npm solo los descarta con `--omit=dev --omit=optional`. Con eso, la imagen bajó de 187 MB a **116 MB comprimida**.
+- **¿Alcanzan 256 MB?** Medido en local con `docker run -m 256m`: **~89 MiB en reposo** y **165–189 MiB con 6 logins simultáneos** (argon2id de 19 MiB cada uno; RSS del proceso con pico de 214 MiB). **Alcanza para T3, pero con poco margen.** Por eso `fly.api.toml` agrega `swap_size_mb = 512` (un pico se vuelve lentitud, no un OOM kill) y `--max-old-space-size=180`. Si en Fly el uso en reposo pasa de ~180 MB (cuando lleguen Socket.IO y BullMQ), se sube con `fly scale memory 512` (≈ US$6/mes).
+- **Health check:** `GET /health` cada 15 s, con 2 s de timeout y 20 s de gracia. No consulta la BD a propósito: si Supabase falla, Fly no reinicia la máquina en bucle.
+- **Concurrencia del proxy:** Fly limita por defecto a 25 conexiones por máquina. Se subió a `soft_limit = 200`/`hard_limit = 250` peticiones para que la carrera de 50 llegue entera a la API.
+- **CORS:** `CORS_ORIGINS` (lista separada por comas) en `[env]`. Sin la variable no se permite ningún origen externo.
+
+### 10.2 Paso 0: Supabase migrada y probada antes del primer `fly deploy` (puerta de T6)
+
+La API hace `$connect` al arrancar: si `DATABASE_URL` está mal, la máquina entra en bucle de reinicios y no se sabe si el problema es Fly o Supabase. Por eso, **antes** de desplegar:
+
+1. Crear `.env.supabase` en la raíz (está en `.gitignore`) con `SUPABASE_DATABASE_URL` (pooler `:6543`, modo transacción) y `SUPABASE_DIRECT_URL` (pooler `:5432`, modo sesión). **El `.env` local no se toca.**
+2. Migrar desde local en un subshell. `dotenv` no pisa variables que ya existen en el entorno, así que `DIRECT_URL` apunta a Supabase solo dentro del paréntesis:
+   ```bash
+   ( set -a; . ./.env.supabase; set +a
+     export DIRECT_URL="$SUPABASE_DIRECT_URL"
+     npm run db:deploy -w @entradas/db && npm run db:check -w @entradas/db )
+   ```
+3. Correr la prueba de T6 (una consulta, una `$transaction` y un `$queryRaw` contra el pooler), con `DATABASE_URL="$SUPABASE_DATABASE_URL"` de la misma forma, y anotar el resultado en doc 11 §3.
+
+### 10.3 Comandos (los corre el equipo, en este orden)
+
+```bash
+# 1. Vercel primero: su URL va en CORS_ORIGINS
+#    Dashboard → Add New Project → importar el repo → Root Directory: apps/web
+#    Variables (Production y Preview):
+#      NEXT_PUBLIC_API_URL=https://entradas-api.fly.dev
+#      NEXT_PUBLIC_WS_URL=wss://entradas-api.fly.dev
+#    Deploy → anotar https://<proyecto>.vercel.app y ponerla en CORS_ORIGINS de fly.api.toml
+
+# 2. Fly (NO usar fly launch: reescribe fly.toml)
+fly auth login
+fly apps create entradas-api
+fly secrets set DATABASE_URL='<pooler :6543 de Supabase>' -a entradas-api --stage
+fly secrets set JWT_SECRET="$(openssl rand -base64 32)" -a entradas-api --stage
+fly secrets list -a entradas-api        # solo DATABASE_URL y JWT_SECRET (sin DIRECT_URL)
+fly deploy -c fly.api.toml --ha=false   # --ha=false: 1 máquina (por defecto crea 2)
+
+# 3. Verificar costo y salud
+fly scale show -a entradas-api          # 1 × shared-cpu-1x 256 MB en gru
+fly ips list -a entradas-api            # IPv4 "shared" + IPv6; si hay IPv4 dedicada: fly ips release <ip>
+fly checks list -a entradas-api
+curl -i https://entradas-api.fly.dev/health
+curl -i -X OPTIONS https://entradas-api.fly.dev/health \
+  -H "Origin: https://<proyecto>.vercel.app" -H "Access-Control-Request-Method: GET"
+```
+
+### 10.4 Medir el RTT desde Cochabamba
+
+Lo mide un integrante que esté en Cochabamba, una vez con fibra/wifi y otra con 4G:
+
+```bash
+for i in $(seq 20); do
+  curl -so /dev/null -w "%{time_connect} %{time_appconnect} %{time_starttransfer}\n" \
+    https://entradas-api.fly.dev/health
+done
+curl -sI https://entradas-api.fly.dev/health | grep -i fly-request-id
+```
+
+- `time_connect` es el handshake TCP, ≈ **1 RTT hasta el edge de Fly**. Fly usa IPs *anycast*: la conexión entra por el edge más cercano, que puede no ser `gru`. El sufijo de `fly-request-id` dice cuál fue.
+- `time_starttransfer − time_appconnect` es el tiempo de una petición completa: edge → máquina en `gru` → respuesta. Es lo que paga cada reserva.
+- Anotar la **mediana** (y el p90) en la tabla de §2 y en doc 10.
+
+## 11. Fuentes (consultadas el 16/10/2026; Fly y Vercel re-verificados el 26/10/2026)
 
 - Stripe, países soportados: <https://stripe.com/global>
 - Render, regiones: <https://render.com/docs/regions> · free: <https://render.com/docs/free>
 - Railway, regiones: <https://docs.railway.com/reference/regions> · planes: <https://docs.railway.com/reference/pricing/plans>
-- Fly.io, regiones: <https://fly.io/docs/reference/regions/> · precios: <https://fly.io/docs/about/pricing/>
+- Fly.io, regiones: <https://fly.io/docs/reference/regions/> · precios: <https://fly.io/docs/about/pricing/> · precios por región (multiplicador de `gru`): <https://fly.io/pricing.md> · configuración de `fly.toml`: <https://fly.io/docs/reference/configuration/>
 - Supabase, precios: <https://supabase.com/pricing> · regiones: <https://supabase.com/docs/guides/platform/regions>
 - Upstash, precios Redis: <https://upstash.com/pricing/redis> · BullMQ en Upstash: <https://upstash.com/docs/redis/integrations/bullmq>
 - Resend, precios: <https://resend.com/pricing>
-- Vercel, límites: <https://vercel.com/docs/limits> · Hobby: <https://vercel.com/docs/plans/hobby> · uso justo: <https://vercel.com/docs/limits/fair-use-guidelines> · regiones: <https://vercel.com/docs/regions>
+- Vercel, límites: <https://vercel.com/docs/limits> · Hobby (actualizada el 14/09/2026): <https://vercel.com/docs/plans/hobby> · uso de funciones: <https://vercel.com/docs/functions/usage-and-pricing> · uso justo: <https://vercel.com/docs/limits/fair-use-guidelines> · regiones: <https://vercel.com/docs/regions>
 - SendGrid, retiro del plan gratis: <https://www.twilio.com/en-us/changelog/sendgrid-free-plan>
 - Consumo de BullMQ en Upstash (foro de Fly): <https://community.fly.io/t/pay-as-you-go-pricing-for-redis-databases/16253>
