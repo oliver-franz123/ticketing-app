@@ -12,8 +12,8 @@ import { ahora, firmarHs256, sinFirma } from './jwt-prueba';
 const SECRETO = 'secreto-de-prueba-de-al-menos-32-bytes!!';
 const ID = '6f1c1a52-6a3b-4b8e-9a51-0c2d6c2b9e11';
 
-// Controlador solo de test: T9 no tiene lógica de eventos. En la semana 2,
-// A-01 pasa a usar el controlador real de /admin/eventos.
+// Controlador solo de test: prueba el guard aislado de la lógica de negocio.
+// A-01 contra el controlador real (POST /eventos) está en eventos.e2e-spec.ts (E-01).
 @Controller()
 class ControladorPrueba {
   @Publico()
@@ -29,9 +29,9 @@ class ControladorPrueba {
   }
 
   @Roles('ORGANIZADOR', 'ADMIN')
-  @Post('admin/eventos')
+  @Post('con-roles')
   @HttpCode(201)
-  crearEvento() {
+  conRoles() {
     return { creado: true };
   }
 }
@@ -41,7 +41,7 @@ const token = (payload: object, secreto = SECRETO) =>
 
 const NO_AUTENTICADO = { statusCode: 401, message: 'No autenticado', error: 'Unauthorized' };
 
-describe('Guards de auth (A-01, A-04)', () => {
+describe('Guards de auth (@Roles, A-04)', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
@@ -117,28 +117,28 @@ describe('Guards de auth (A-01, A-04)', () => {
         .expect(NO_AUTENTICADO));
   });
 
-  describe('A-01: rol insuficiente → 403', () => {
-    it('COMPRADOR en POST /admin/eventos → 403', () =>
+  describe('@Roles: rol insuficiente → 403', () => {
+    it('COMPRADOR → 403', () =>
       request(app.getHttpServer())
-        .post('/admin/eventos')
+        .post('/con-roles')
         .set('Authorization', `Bearer ${token({ sub: ID, rol: 'COMPRADOR' })}`)
         .expect(403)
         .expect({ statusCode: 403, message: 'No tiene permiso para esta acción', error: 'Forbidden' }));
 
-    it('VALIDADOR en POST /admin/eventos → 403', () =>
+    it('VALIDADOR → 403', () =>
       request(app.getHttpServer())
-        .post('/admin/eventos')
+        .post('/con-roles')
         .set('Authorization', `Bearer ${token({ sub: ID, rol: 'VALIDADOR' })}`)
         .expect(403));
 
-    it.each(['ORGANIZADOR', 'ADMIN'])('%s en POST /admin/eventos → 201', async (rol) => {
+    it.each(['ORGANIZADOR', 'ADMIN'])('%s → 201', async (rol) => {
       await request(app.getHttpServer())
-        .post('/admin/eventos')
+        .post('/con-roles')
         .set('Authorization', `Bearer ${token({ sub: ID, rol })}`)
         .expect(201);
     });
 
     it('sin token en un endpoint con @Roles → 401 (no 403)', () =>
-      request(app.getHttpServer()).post('/admin/eventos').expect(401));
+      request(app.getHttpServer()).post('/con-roles').expect(401));
   });
 });
