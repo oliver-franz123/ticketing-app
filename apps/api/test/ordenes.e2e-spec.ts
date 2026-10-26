@@ -134,6 +134,27 @@ describe('Órdenes: reserva de asientos', () => {
     });
   });
 
+  describe('RN-09 y estado del evento', () => {
+    // Fechas y estados forzados con Prisma: el DTO de POST /eventos no deja
+    // crear un evento en el pasado.
+    it.each([
+      ['CANCELADO', { estado: 'CANCELADO' }, 'EVENTO_NO_DISPONIBLE'],
+      ['FINALIZADO', { estado: 'FINALIZADO' }, 'EVENTO_NO_DISPONIBLE'],
+      ['venta_inicio mañana', { ventaInicio: enDias(1) }, 'VENTA_NO_ABIERTA'],
+      ['el evento ya empezó', { inicio: enDias(-0.5) }, 'VENTA_CERRADA'],
+    ])('%s → 409 con su código y nada cambia', async (_caso, cambio, codigo) => {
+      const evento = await eventoALaVenta(1, 1);
+      await prisma.evento.update({ where: { id: evento.id }, data: cambio });
+      const [usuario] = await fx.crearCompradores(1);
+
+      const res = await reservar(usuario, { eventoId: evento.id, asientoIds: evento.asientos }).expect(409);
+
+      expect(res.body.codigo).toBe(codigo);
+      expect(await prisma.orden.count({ where: { usuarioId: usuario.id } })).toBe(0);
+      expect((await prisma.asiento.findUniqueOrThrow({ where: { id: evento.asientos[0] } })).estado).toBe('LIBRE');
+    });
+  });
+
   describe('contrato de POST /ordenes', () => {
     let evento: { id: string; asientos: string[] };
     let compradores: Usuario[];

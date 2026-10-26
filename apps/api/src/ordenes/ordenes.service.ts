@@ -11,6 +11,8 @@ import { RESERVA_TTL_SEGUNDOS_POR_DEFECTO } from './limites';
 
 interface EventoALaVenta {
   estado: string;
+  venta_abierta: boolean;
+  no_empezo: boolean;
 }
 
 interface OrdenInsertada {
@@ -19,15 +21,13 @@ interface OrdenInsertada {
   total_centavos: bigint;
 }
 
-// El 409 dice QUÉ asientos faltan, nunca de quién son.
+// Los 409 llevan un `codigo` estable para que la web elija el mensaje.
+const conflicto = (codigo: string, message: string, extra: object = {}) =>
+  new ConflictException({ statusCode: 409, error: 'Conflict', codigo, message, ...extra });
+
+// Dice QUÉ asientos faltan, nunca de quién son.
 const asientosNoDisponibles = (noDisponibles: string[]) =>
-  new ConflictException({
-    statusCode: 409,
-    error: 'Conflict',
-    codigo: 'ASIENTOS_NO_DISPONIBLES',
-    message: 'Algunos asientos ya no están disponibles',
-    noDisponibles,
-  });
+  conflicto('ASIENTOS_NO_DISPONIBLES', 'Algunos asientos ya no están disponibles', { noDisponibles });
 
 @Injectable()
 export class OrdenesService {
@@ -54,12 +54,19 @@ export class OrdenesService {
     return this.prisma.$transaction(
       async (tx) => {
         // A. El evento tiene que estar a la venta. Un BORRADOR da el mismo 404
-        // que un id inexistente, como en el mapa.
+        // que un id inexistente, como en el mapa. RN-09 con now() de Postgres,
+        // nunca con la hora de la API.
         const [evento] = await tx.$queryRaw<EventoALaVenta[]>`
-          SELECT estado FROM eventos WHERE id = ${eventoId}::uuid`;
+          SELECT estado, venta_inicio <= now() AS venta_abierta, inicio > now() AS no_empezo
+          FROM eventos WHERE id = ${eventoId}::uuid`;
         if (!evento || evento.estado === EstadoEvento.BORRADOR) {
           throw new NotFoundException('Evento no encontrado');
         }
+        if (evento.estado !== EstadoEvento.PUBLICADO) {
+          throw conflicto('EVENTO_NO_DISPONIBLE', 'El evento no está a la venta');
+        }
+        if (!evento.venta_abierta) throw conflicto('VENTA_NO_ABIERTA', 'La venta todavía no abrió');
+        if (!evento.no_empezo) throw conflicto('VENTA_CERRADA', 'La venta cerró: el evento ya empezó');
 
         // 1. La orden primero: asientos.orden_id es una FK normal (no diferible).
         // El total sale del precio de cada zona al reservar (RN-05). COALESCE: si
