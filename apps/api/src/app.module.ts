@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { CatalogoModule } from './catalogo/catalogo.module';
+import { OrdenesModule } from './ordenes/ordenes.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SaludController } from './salud/salud.controller';
 
@@ -12,6 +13,7 @@ import { SaludController } from './salud/salud.controller';
     PrismaModule,
     AuthModule,
     CatalogoModule,
+    OrdenesModule,
   ],
   controllers: [SaludController],
 })

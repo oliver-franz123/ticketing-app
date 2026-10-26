@@ -18,6 +18,13 @@ export interface GrillaZona {
   columnas: number;
 }
 
+export interface ReservaAsientos {
+  eventoId: string;
+  ordenId: string;
+  asientoIds: string[];
+  ttlSegundos: number;
+}
+
 // Dueño de la tabla asientos (doc 03 §4). Los demás módulos le pasan su
 // transacción en vez de escribir asientos por su cuenta.
 @Injectable()
@@ -42,6 +49,36 @@ export class InventarioService {
       throw new Error(`Se esperaban ${filas * columnas} asientos y se insertaron ${insertados}`);
     }
     return insertados;
+  }
+
+  // Toma los asientos para la orden, todo en UNA sentencia (doc 04 §4.1). Devuelve
+  // los que consiguió: si son menos que los pedidos, el llamador hace ROLLBACK.
+  // - estado LIBRE o RESERVADO vencido: expiración perezosa, no depende del job.
+  // - ORDER BY id: orden fijo de bloqueo, el mismo que la re-captura y el job.
+  // - SKIP LOCKED: si otra transacción está tomando el asiento, no se espera;
+  //   queda fuera de los candidatos y el comprador recibe 409 al instante.
+  // - now() es la hora de inicio de la transacción: expires_at queda igual al de la orden.
+  async reservar(tx: Pick<Prisma.TransactionClient, '$queryRaw'>, reserva: ReservaAsientos): Promise<string[]> {
+    const { eventoId, ordenId, asientoIds, ttlSegundos } = reserva;
+    const tomados = await tx.$queryRaw<{ id: string }[]>`
+      WITH candidatos AS (
+        SELECT id
+        FROM asientos
+        WHERE evento_id = ${eventoId}::uuid
+          AND id = ANY(${asientoIds}::uuid[])
+          AND (estado = 'LIBRE' OR (estado = 'RESERVADO' AND expires_at < now()))
+        ORDER BY id
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE asientos a
+      SET estado     = 'RESERVADO',
+          orden_id   = ${ordenId}::uuid,
+          expires_at = now() + make_interval(secs => ${ttlSegundos}::int),
+          version    = a.version + 1
+      FROM candidatos c
+      WHERE a.id = c.id
+      RETURNING a.id`;
+    return tomados.map((a) => a.id);
   }
 
   // Snapshot del mapa (doc 05). Orden por largo y después por texto: con solo
