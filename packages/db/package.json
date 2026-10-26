@@ -13,8 +13,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:check": "prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code",
     "seed": "npm run build && node prisma/semillas/seed.mts",
-    "test": "vitest run test/*.spec.ts",
-    "test:e2e": "vitest run test/*.e2e-spec.ts"
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.config.e2e.mts"
   },
   "devDependencies": {
     "argon2": "^0.45.1",
