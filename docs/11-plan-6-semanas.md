@@ -114,7 +114,7 @@ gantt
 |---|---|---|---|
 | Free tiers que cambian o Supabase pausado el día de la demo | Media | Alto | Verificar en la semana 1 y el día anterior. Plan C local ensayado |
 | Fly pide tarjeta o el costo supera lo previsto | Media | Medio | Plan B Railway (US$5). Alertas de gasto. Apagar máquinas fuera de las semanas de demo |
-| El pooler de Supabase en modo transacción + Prisma da problemas (prepared statements) | Baja (T6, 26/10/2026) | Medio | **Probado en T6: sin problemas.** Repetido contra el proyecto nuevo de Supabase en South America (São Paulo). Transaction pooler (`:6543`) con PostgreSQL 17.11, Prisma 7 + `@prisma/adapter-pg`, desde local. Las 5 pruebas OK (ver nota debajo). `PrismaService` **no se modificó**: no hubo problemas de compatibilidad. El adaptador `pg` usa sentencias preparadas sin nombre, compatibles con el modo transacción; `pgbouncer=true` era un parámetro del motor en Rust y aquí no aplica. Si algo falla más adelante: tamaño del pool con `max`, `transactionOptions` y CA de Supabase para SSL |
+| El pooler de Supabase en modo transacción + Prisma da problemas (prepared statements) | Baja (T6, 26/10/2026) | Medio | **Probado en T6: sin problemas.** Repetido contra el proyecto nuevo de Supabase en South America (São Paulo). Transaction pooler (`:6543`) con PostgreSQL 17.11, Prisma 7 + `@prisma/adapter-pg`, desde local. Las 5 pruebas OK (ver nota debajo). Segunda pasada el mismo día: también funciona el `UPDATE ... WHERE estado='LIBRE' ... RETURNING` dentro de una transacción (el primero toma el asiento y el segundo recibe 0 filas), todo con `ROLLBACK` y sin dejar datos. `PrismaService` **no se modificó**: no hubo problemas de compatibilidad. El adaptador `pg` usa sentencias preparadas sin nombre, compatibles con el modo transacción; `pgbouncer=true` era un parámetro del motor en Rust y aquí no aplica. Si algo falla más adelante: tamaño del pool con `max`, `transactionOptions` y CA de Supabase para SSL |
 | La concurrencia "funciona en local" pero no en el despliegue | Baja | Alto | `carrera.js` contra Fly desde la semana 2 |
 | Un integrante se enferma o abandona | Media | Alto | Slices verticales completos (nada queda a medias en capas). Revisión cruzada para que otro sepa continuar |
 | La cuota de Resend (100/día) se agota en los ensayos | Media | Bajo | Mailpit en local y Resend solo en el entorno desplegado. Pocos emails reales |
@@ -135,7 +135,17 @@ gantt
 | Resultado final | ✅ `T6: todo OK` |
 
 - **Los conteos en 0 son esperables:** todavía no hay datos sembrados en esas tablas (las semillas son T7). Las pruebas confirman que las tablas existen y responden a través del pooler, no que tengan datos.
-- **Alcance de T6:** solo validó que las consultas y las transacciones se comportan bien a través del pooler. **No demuestra todavía que se eviten las compras duplicadas.** Eso lo prueban el test C-01 y la carrera de 50 → 1 (`carrera.js`, semana 2), primero en local y después contra Fly.
+**Segunda pasada de T6 (26/10/2026), mismo pooler, con el `UPDATE` condicional de la reserva (doc 04 §4.1).** Todas las transacciones terminaron en `ROLLBACK`: ninguna escritura se confirmó.
+
+| Prueba | Resultado |
+|---|---|
+| Consulta simple: `departamento.count()` y `SHOW server_version` | ✅ |
+| `$transaction` con dos operaciones (INSERT de un departamento + `count` en la misma transacción) | ✅ `count` dentro = 1, mismo PID antes y después. Tras el `ROLLBACK`, `count` afuera = 0 |
+| `UPDATE asientos ... WHERE id = $1 AND (estado='LIBRE' OR (estado='RESERVADO' AND expires_at < now())) RETURNING id, version` en una transacción (con las filas mínimas que piden las FK: usuario, geografía, evento, zona, orden y un asiento `LIBRE`) | ✅ El primer `UPDATE` devolvió 1 fila (`version = 1`). El mismo `UPDATE` repetido devolvió **0 filas** |
+| Sin residuos después del `ROLLBACK` | ✅ 0 usuarios, 0 asientos y 0 departamentos de prueba |
+| Resultado final | ✅ `T6: todo OK` |
+
+- **Alcance de T6:** solo validó que las consultas y las transacciones se comportan bien a través del pooler. **No demuestra todavía que se eviten las compras duplicadas.** La segunda pasada fue **secuencial**: los dos `UPDATE` corrieron uno detrás del otro en la misma transacción. Prueba que la sentencia y su `RETURNING` funcionan a través del pooler, pero no prueba qué pasa cuando dos transacciones compiten. **No reemplaza al test C-01 ni a la carrera de 50 → 1** (`carrera.js`, semana 2), que se corren primero en local y después contra Fly.
 
 ## 4. Plan de recorte (si falta tiempo)
 
