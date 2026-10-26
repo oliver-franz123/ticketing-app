@@ -76,11 +76,17 @@ describe('Órdenes: reserva de asientos', () => {
   // También se llena el pool de Postgres (10 conexiones por defecto en pg): si
   // no, la primera transacción usa la única conexión abierta y termina antes de
   // que las demás consigan la suya (~10 ms en abrir cada una).
-  const carrera = async (peticiones: { usuario: Usuario; body: object; clave?: string }[]): Promise<Respuesta[]> => {
-    await Promise.all([
-      ...peticiones.map(() => fetch(`${url}/health`).then((r) => r.text())),
+  const calentar = (conexiones: number) =>
+    Promise.all([
+      ...Array.from({ length: conexiones }, () => fetch(`${url}/health`).then((r) => r.text())),
       ...Array.from({ length: 10 }, () => prisma.$transaction((tx) => tx.$executeRaw`SELECT pg_sleep(0.05)`)),
     ]);
+
+  const carrera = async (
+    peticiones: { usuario: Usuario; body: object; clave?: string }[],
+    { calentado = false } = {},
+  ): Promise<Respuesta[]> => {
+    if (!calentado) await calentar(peticiones.length);
     const pedidos = peticiones.map(({ usuario, body, clave = randomUUID() }) => ({
       method: 'POST',
       headers: {
@@ -131,6 +137,97 @@ describe('Órdenes: reserva de asientos', () => {
       const fila = await prisma.asiento.findUniqueOrThrow({ where: { id: asiento } });
       expect(fila).toMatchObject({ estado: 'RESERVADO', ordenId: ganadora, version: 1 });
       expect(await prisma.ordenItem.count({ where: { asientoId: asiento } })).toBe(1);
+    });
+  });
+
+  describe('C-02 / C-03: reservas cruzadas, 100 rondas', () => {
+    // Con SKIP LOCKED NO se garantiza "una gana y la otra 409": T1 puede bloquear
+    // el asiento 1 mientras T2 salta el 1 y bloquea el 2; las dos quedan
+    // incompletas y ambas reciben 409 (aceptado en doc 04 §4.2). Lo que sí se
+    // garantiza: como mucho una gana, nunca hay reservas parciales y nunca hay
+    // deadlock.
+    const RONDAS = 100;
+
+    const rondas = async (tamano: number, pedidos: (asientos: string[]) => [string[], string[]]) => {
+      const evento = await eventoALaVenta(RONDAS / 4, tamano * 4);
+      const compradores = await fx.crearCompradores(2 * RONDAS);
+      await calentar(2);
+
+      const ganadoras: string[] = [];
+      let ambasPierden = 0;
+      for (let r = 0; r < RONDAS; r++) {
+        const asientos = evento.asientos.slice(r * tamano, (r + 1) * tamano);
+        const [a, b] = pedidos(asientos);
+        const respuestas = await carrera(
+          [
+            { usuario: compradores[2 * r], body: { eventoId: evento.id, asientoIds: a } },
+            { usuario: compradores[2 * r + 1], body: { eventoId: evento.id, asientoIds: b } },
+          ],
+          { calentado: true },
+        );
+
+        // Ningún 500: un deadlock (40P01) llegaría como error interno.
+        expect(respuestas.map((x) => x.status).filter((s) => s !== 201 && s !== 409)).toEqual([]);
+        const ok = respuestas.filter((x) => x.status === 201);
+        expect(ok.length).toBeLessThanOrEqual(1);
+        for (const x of respuestas.filter((y) => y.status === 409)) {
+          expect(x.body.codigo).toBe('ASIENTOS_NO_DISPONIBLES');
+        }
+        if (ok.length === 1) ganadoras.push(ok[0].body.ordenId!);
+        else ambasPierden++;
+      }
+
+      // Nunca parciales: cada orden tiene TODOS sus asientos y cada asiento
+      // reservado pertenece a una orden ganadora que lo incluye.
+      const ordenes = await prisma.orden.findMany({ where: { eventoId: evento.id }, include: { items: true } });
+      expect(ordenes.map((o) => o.id).sort()).toEqual([...ganadoras].sort());
+      const reservados = await prisma.asiento.findMany({ where: { eventoId: evento.id, estado: 'RESERVADO' } });
+      expect(reservados).toHaveLength(ordenes.reduce((n, o) => n + o.items.length, 0));
+      for (const asiento of reservados) {
+        const duena = ordenes.find((o) => o.id === asiento.ordenId);
+        expect(duena?.items.some((i) => i.asientoId === asiento.id)).toBe(true);
+      }
+      return { ganadoras: ganadoras.length, ambasPierden };
+    };
+
+    it('C-02: {1,2,3} y {3,4,5} concurrentes → como mucho una gana completa, nunca parciales', async () => {
+      const { ganadoras, ambasPierden } = await rondas(5, (s) => [s.slice(0, 3), s.slice(2, 5)]);
+      expect(ganadoras + ambasPierden).toBe(RONDAS);
+      // Se solapan en un solo asiento: casi siempre gana una.
+      expect(ganadoras).toBeGreaterThan(0);
+    }, 30_000);
+
+    // C-03 no puede ponerse en rojo con esta consulta: con SKIP LOCKED la reserva
+    // nunca espera un lock, así que no puede formar un ciclo aunque faltara el
+    // ORDER BY id. Queda como guardia de regresión (si alguien saca SKIP LOCKED).
+    // El ORDER BY id es decisivo en la re-captura del webhook, que sí espera: C-09.
+    it('C-03: {1,2} y {2,1} concurrentes → sin deadlock (< 5 s), sin 500 y sin parciales', async () => {
+      const inicio = Date.now();
+      await rondas(2, (s) => [[s[0], s[1]], [s[1], s[0]]]);
+      expect(Date.now() - inicio).toBeLessThan(5000);
+    }, 10_000);
+  });
+
+  describe('C-04: expiración perezosa', () => {
+    it('el asiento de una orden ajena vencida se puede reservar sin que corra el job', async () => {
+      const evento = await eventoALaVenta();
+      const [ana, beto] = await fx.crearCompradores(2);
+      const asiento = evento.asientos[0];
+      const deAna = await reservar(ana, { eventoId: evento.id, asientoIds: [asiento] }).expect(201);
+      await reservar(beto, { eventoId: evento.id, asientoIds: [asiento] }).expect(409);
+
+      // Vence por SQL; la orden de Ana sigue PENDIENTE_PAGO en la BD (el job no corrió).
+      await prisma.$executeRaw`UPDATE ordenes SET expires_at = now() - interval '1 second' WHERE id = ${deAna.body.ordenId}::uuid`;
+      await prisma.$executeRaw`UPDATE asientos SET expires_at = now() - interval '1 second' WHERE id = ${asiento}::uuid`;
+
+      const deBeto = await reservar(beto, { eventoId: evento.id, asientoIds: [asiento] }).expect(201);
+
+      expect(await prisma.asiento.findUniqueOrThrow({ where: { id: asiento } })).toMatchObject({
+        estado: 'RESERVADO',
+        ordenId: deBeto.body.ordenId,
+        version: 2,
+      });
+      expect((await prisma.orden.findUniqueOrThrow({ where: { id: deAna.body.ordenId } })).estado).toBe('PENDIENTE_PAGO');
     });
   });
 
