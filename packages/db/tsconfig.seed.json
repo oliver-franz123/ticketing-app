@@ -1,0 +1,11 @@
+// Solo typecheck de las semillas y sus tests: Node las ejecuta con type
+// stripping (sin compilar), por eso los imports llevan la extensión .mts.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
+  },
+  "include": ["prisma/semillas", "test"]
+}

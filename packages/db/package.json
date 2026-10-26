@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "prisma generate && tsc -p tsconfig.json",
-    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
+    "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.seed.json",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
