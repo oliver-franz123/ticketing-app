@@ -77,6 +77,7 @@ docker-compose.yml   Infraestructura local
 | `npm run dev` | Levanta shared (en modo watch), api, worker y web |
 | `npm run build` | Compila shared y después api, worker y web |
 | `npm run typecheck` | Revisa los tipos de los cuatro paquetes |
+| `npm run seed` | Carga departamentos, ciudades de Cochabamba y un usuario por rol (`*@entradas.test`, contraseña = `SEED_PASSWORD`). Se puede repetir sin duplicar |
 | `docker compose up -d --wait` | Levanta la infraestructura y espera a que esté sana |
 | `docker compose down` | Detiene la infraestructura (conserva los datos) |
 | `docker compose down -v` | Detiene y **borra** los datos de Postgres y Redis |

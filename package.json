@@ -16,7 +16,8 @@
     "typecheck": "npm run build -w @entradas/shared -w @entradas/db && npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "test": "npm run test --workspaces --if-present",
-    "test:e2e": "npm run test:e2e --workspaces --if-present"
+    "test:e2e": "npm run test:e2e --workspaces --if-present",
+    "seed": "npm run seed -w @entradas/db --"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
