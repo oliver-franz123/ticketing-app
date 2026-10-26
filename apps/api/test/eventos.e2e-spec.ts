@@ -344,4 +344,77 @@ describe('Eventos y mapa de asientos', () => {
       expect(res.body.asientos.filter((a: { estado: string }) => a.estado === 'LIBRE')).toHaveLength(53);
     });
   });
+
+  describe('PATCH /eventos/:id/publicar', () => {
+    // En la ciudad B para no alterar los conteos del listado de A.
+    const borradorEnB = () => crearConEstado(fx.recintoB.id, 60, 'BORRADOR');
+
+    const publicar = (usuario: { id: string; rol: Rol } | null, id: string) => {
+      const req = request(app.getHttpServer()).patch(`/eventos/${id}/publicar`);
+      return usuario ? req.set('Authorization', `Bearer ${tokenDe(usuario)}`) : req;
+    };
+
+    const estadoDe = async (id: string) => (await prisma.evento.findUniqueOrThrow({ where: { id } })).estado;
+
+    it('E-09: sin token → 401 y sigue BORRADOR', async () => {
+      const evento = await borradorEnB();
+      await publicar(null, evento.id).expect(401);
+      expect(await estadoDe(evento.id)).toBe('BORRADOR');
+    });
+
+    it.each(['comprador', 'validador'] as const)('E-09: %s → 403 y sigue BORRADOR', async (rol) => {
+      const evento = await borradorEnB();
+      await publicar(fx.usuarios[rol], evento.id).expect(403);
+      expect(await estadoDe(evento.id)).toBe('BORRADOR');
+    });
+
+    it('E-10: el ORGANIZADOR dueño publica → 200 y el mapa pasa a ser público', async () => {
+      const evento = await borradorEnB();
+      await request(app.getHttpServer()).get(`/eventos/${evento.id}/asientos`).expect(404);
+
+      const res = await publicar(fx.usuarios.organizadorA, evento.id).expect(200);
+
+      expect(res.body).toEqual({ id: evento.id, estado: 'PUBLICADO' });
+      expect(await estadoDe(evento.id)).toBe('PUBLICADO');
+      await request(app.getHttpServer()).get(`/eventos/${evento.id}/asientos`).expect(200);
+    });
+
+    it('E-11: un ADMIN publica el evento de otro organizador → 200', async () => {
+      const evento = await borradorEnB();
+      await publicar(fx.usuarios.admin, evento.id).expect(200);
+      expect(await estadoDe(evento.id)).toBe('PUBLICADO');
+    });
+
+    it('E-12: el ORGANIZADOR B publica el evento de A → el mismo 404 que un id inexistente', async () => {
+      const evento = await borradorEnB();
+      const ajeno = await publicar(fx.usuarios.organizadorB, evento.id).expect(404);
+      const inexistente = await publicar(fx.usuarios.organizadorB, randomUUID()).expect(404);
+      expect(ajeno.body).toEqual(inexistente.body);
+      expect(await estadoDe(evento.id)).toBe('BORRADOR');
+    });
+
+    it('E-12: id que no es uuid → 400', () => publicar(fx.usuarios.organizadorA, '42').expect(400));
+
+    it('E-13: publicar dos veces → 409 y no hay vuelta atrás', async () => {
+      const evento = await borradorEnB();
+      await publicar(fx.usuarios.organizadorA, evento.id).expect(200);
+      const res = await publicar(fx.usuarios.organizadorA, evento.id).expect(409);
+      expect(res.body.message).toBe('El evento ya no está en BORRADOR');
+      expect(await estadoDe(evento.id)).toBe('PUBLICADO');
+    });
+
+    it('E-13: dos PATCH concurrentes → exactamente un 200 y un 409', async () => {
+      const evento = await borradorEnB();
+      const codigos = (
+        await Promise.all([publicar(fx.usuarios.organizadorA, evento.id), publicar(fx.usuarios.admin, evento.id)])
+      ).map((r) => r.status);
+      expect(codigos.sort()).toEqual([200, 409]);
+    });
+
+    it('E-13: un CANCELADO no se puede publicar → 409', async () => {
+      const evento = await crearConEstado(fx.recintoB.id, 60, 'CANCELADO');
+      await publicar(fx.usuarios.organizadorA, evento.id).expect(409);
+      expect(await estadoDe(evento.id)).toBe('CANCELADO');
+    });
+  });
 });

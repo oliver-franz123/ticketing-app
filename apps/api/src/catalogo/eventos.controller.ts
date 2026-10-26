@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { Rol } from '@entradas/db';
 import { Publico, Roles, UsuarioActual } from '../auth/decoradores';
 import type { UsuarioAutenticado } from '../auth/tipos';
@@ -23,6 +23,14 @@ export class EventosController {
   @Header('Cache-Control', 'public, max-age=30')
   listar(@Query() query: ListarEventosQuery) {
     return this.eventos.listar(query);
+  }
+
+  // BORRADOR → PUBLICADO, sin vuelta atrás: congela el mapa. Un ORGANIZADOR
+  // solo publica lo suyo; el ADMIN, cualquiera.
+  @Roles(Rol.ORGANIZADOR, Rol.ADMIN)
+  @Patch(':id/publicar')
+  publicar(@UsuarioActual() usuario: UsuarioAutenticado, @Param('id', ParseUUIDPipe) id: string) {
+    return this.eventos.publicar(usuario, id);
   }
 
   // Snapshot del mapa (doc 05). Sin tiempo real todavía: llega con el WebSocket.
