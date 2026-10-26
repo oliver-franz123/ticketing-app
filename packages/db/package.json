@@ -11,11 +11,16 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:check": "prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code"
+    "db:check": "prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code",
+    "seed": "npm run build && node prisma/semillas/seed.mts",
+    "test": "vitest run test/*.spec.ts",
+    "test:e2e": "vitest run test/*.e2e-spec.ts"
   },
   "devDependencies": {
+    "argon2": "^0.45.1",
     "dotenv": "18.0.8",
-    "prisma": "7.10.1"
+    "prisma": "7.10.1",
+    "vitest": "^4.1.2"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.1",
