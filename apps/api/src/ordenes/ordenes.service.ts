@@ -71,6 +71,17 @@ export class OrdenesService {
         if (!evento.venta_abierta) throw conflicto('VENTA_NO_ABIERTA', 'La venta todavía no abrió');
         if (!evento.no_empezo) throw conflicto('VENTA_CERRADA', 'La venta cerró: el evento ya empezó');
 
+        // 0. RN-04 sin depender del job: si su orden pendiente en este evento ya
+        // venció (y el Worker todavía no la marcó), se marca EXPIRADA para que el
+        // índice parcial no bloquee la nueva. Sus asientos no se tocan: la
+        // expiración perezosa ya los trata como libres.
+        await tx.$executeRaw`
+          UPDATE ordenes SET estado = 'EXPIRADA'
+          WHERE usuario_id = ${usuario.id}::uuid
+            AND evento_id  = ${eventoId}::uuid
+            AND estado     = 'PENDIENTE_PAGO'
+            AND expires_at < now()`;
+
         // 1. La orden primero: asientos.orden_id es una FK normal (no diferible).
         // El total sale del precio de cada zona al reservar (RN-05). COALESCE: si
         // ningún asiento es del evento, sum da NULL; con 0 se inserta y el paso 2

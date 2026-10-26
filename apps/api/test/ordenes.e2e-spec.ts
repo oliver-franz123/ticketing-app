@@ -219,6 +219,78 @@ describe('Órdenes: reserva de asientos', () => {
     });
   });
 
+  describe('RN-04: una orden pendiente por usuario y evento', () => {
+    // Vence la orden y sus asientos sin correr el job (como con el Worker caído).
+    const vencer = async (ordenId: string) => {
+      await prisma.$executeRaw`UPDATE ordenes SET expires_at = now() - interval '1 second' WHERE id = ${ordenId}::uuid`;
+      await prisma.$executeRaw`UPDATE asientos SET expires_at = now() - interval '1 second' WHERE orden_id = ${ordenId}::uuid`;
+    };
+
+    it('C-07: una 2.ª orden en el mismo evento → 409 ORDEN_PENDIENTE_EXISTENTE y sus asientos siguen LIBRE', async () => {
+      const evento = await eventoALaVenta();
+      const [usuario] = await fx.crearCompradores(1);
+      await reservar(usuario, { eventoId: evento.id, asientoIds: [evento.asientos[0]] }).expect(201);
+
+      const res = await reservar(usuario, { eventoId: evento.id, asientoIds: [evento.asientos[1]] }).expect(409);
+
+      expect(res.body.codigo).toBe('ORDEN_PENDIENTE_EXISTENTE');
+      expect(await prisma.asiento.findUniqueOrThrow({ where: { id: evento.asientos[1] } })).toMatchObject({
+        estado: 'LIBRE',
+        version: 0,
+      });
+      expect(await prisma.orden.count({ where: { usuarioId: usuario.id } })).toBe(1);
+    });
+
+    it('C-07: en otro evento sí puede reservar', async () => {
+      const [uno, otro] = [await eventoALaVenta(), await eventoALaVenta()];
+      const [usuario] = await fx.crearCompradores(1);
+      await reservar(usuario, { eventoId: uno.id, asientoIds: [uno.asientos[0]] }).expect(201);
+      await reservar(usuario, { eventoId: otro.id, asientoIds: [otro.asientos[0]] }).expect(201);
+    });
+
+    it('C-07: dos órdenes concurrentes del mismo usuario (claves distintas) → un 201 y un 409', async () => {
+      const evento = await eventoALaVenta();
+      const [usuario] = await fx.crearCompradores(1);
+
+      const respuestas = await carrera([
+        { usuario, body: { eventoId: evento.id, asientoIds: [evento.asientos[0]] } },
+        { usuario, body: { eventoId: evento.id, asientoIds: [evento.asientos[1]] } },
+      ]);
+
+      expect(respuestas.map((r) => r.status).sort()).toEqual([201, 409]);
+      expect(respuestas.find((r) => r.status === 409)?.body.codigo).toBe('ORDEN_PENDIENTE_EXISTENTE');
+      expect(await prisma.orden.count({ where: { usuarioId: usuario.id } })).toBe(1);
+    });
+
+    it('C-08: su orden pendiente ya venció y el job no corrió → 201; la vieja queda EXPIRADA', async () => {
+      const evento = await eventoALaVenta();
+      const [usuario] = await fx.crearCompradores(1);
+      const vieja = await reservar(usuario, { eventoId: evento.id, asientoIds: [evento.asientos[0]] }).expect(201);
+      await vencer(vieja.body.ordenId);
+
+      const nueva = await reservar(usuario, { eventoId: evento.id, asientoIds: [evento.asientos[1]] }).expect(201);
+
+      expect((await prisma.orden.findUniqueOrThrow({ where: { id: vieja.body.ordenId } })).estado).toBe('EXPIRADA');
+      expect((await prisma.orden.findUniqueOrThrow({ where: { id: nueva.body.ordenId } })).estado).toBe('PENDIENTE_PAGO');
+    });
+
+    it('C-08: y puede volver a tomar el mismo asiento de su orden vencida', async () => {
+      const evento = await eventoALaVenta();
+      const [usuario] = await fx.crearCompradores(1);
+      const asiento = evento.asientos[0];
+      const vieja = await reservar(usuario, { eventoId: evento.id, asientoIds: [asiento] }).expect(201);
+      await vencer(vieja.body.ordenId);
+
+      const nueva = await reservar(usuario, { eventoId: evento.id, asientoIds: [asiento] }).expect(201);
+
+      expect(await prisma.asiento.findUniqueOrThrow({ where: { id: asiento } })).toMatchObject({
+        estado: 'RESERVADO',
+        ordenId: nueva.body.ordenId,
+        version: 2,
+      });
+    });
+  });
+
   describe('RN-09 y estado del evento', () => {
     // Fechas y estados forzados con Prisma: el DTO de POST /eventos no deja
     // crear un evento en el pasado.
