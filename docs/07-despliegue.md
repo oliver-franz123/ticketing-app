@@ -187,6 +187,55 @@ flowchart LR
 | Deploy por rama | `main` → producción de la demo. PR → Vercel preview | — |
 | Protección de rama | `main` exige PR + CI en verde + 1 revisión | Trabajo en equipo |
 
+### 7.1 Estado actual (T2, semana 1)
+
+El CI ya existe en `.github/workflows/ci.yml`. Es la parte del diagrama de arriba que hoy se puede correr: todavía no hay test de concurrencia, build de las apps ni deploy.
+
+- **Disparo:** `pull_request` hacia `main` y `push` a `main`.
+- **Un solo job**, llamado **`lint, typecheck y tests`**. Ese nombre es el *status check* que exige la protección de `main`. Si se renombra el job, hay que volver a elegirlo en la protección.
+- **Service containers:** `postgres:16` y `redis:7`, con healthcheck. Usan las mismas credenciales que `docker-compose.yml` (`entradas`/`entradas`).
+- **Node** según `.nvmrc` (22), con caché de npm.
+- **Permisos mínimos** (`contents: read`). Un push nuevo al mismo PR cancela la ejecución anterior (`concurrency`).
+
+```mermaid
+flowchart LR
+    I["npm ci"] --> B["build<br/>shared + db"]
+    B --> M["db:deploy<br/>(migraciones)"]
+    M --> K["db:check<br/>(esquema = migraciones)"]
+    K --> T["typecheck"]
+    T --> L["lint"]
+    L --> U["npm test<br/>(unitarios)"]
+    U --> E["npm run test:e2e"]
+```
+
+| Variable | Valor en CI | Nota |
+|---|---|---|
+| `DATABASE_URL`, `DIRECT_URL` | `postgresql://entradas:entradas@localhost:5432/entradas` | Ambas apuntan al service container. No hay `.env` en CI: dotenv no pisa estas variables |
+| `REDIS_URL` | `redis://localhost:6379` | Service container |
+| `JWT_SECRET` | Texto fijo de ≥ 32 bytes en el workflow | **Solo de prueba.** Nunca va un secreto real en el workflow ni en `secrets.*` para el CI |
+| `JWT_EXPIRES_IN`, `NODE_ENV`, `TZ` | `60m`, `test`, `UTC` | — |
+
+**Simularlo en local** con una BD limpia y descartable en los puertos **5433** y **6380**, para no tocar los contenedores de `docker compose`:
+
+```bash
+docker run --rm -d --name ci-pg -e POSTGRES_USER=entradas -e POSTGRES_PASSWORD=entradas -e POSTGRES_DB=entradas -e TZ=UTC -p 5433:5432 postgres:16
+docker run --rm -d --name ci-redis -p 6380:6379 redis:7
+export NODE_ENV=test TZ=UTC JWT_EXPIRES_IN=60m \
+  DATABASE_URL=postgresql://entradas:entradas@localhost:5433/entradas \
+  DIRECT_URL=postgresql://entradas:entradas@localhost:5433/entradas \
+  REDIS_URL=redis://localhost:6380 \
+  JWT_SECRET=ci-secreto-de-prueba-no-usar-en-produccion-0123456789
+npm ci
+npm run build -w @entradas/shared -w @entradas/db
+npm run db:deploy -w @entradas/db && npm run db:check -w @entradas/db
+npm run typecheck && npm run lint && npm test && npm run test:e2e
+docker stop ci-pg ci-redis
+```
+
+Las variables exportadas ganan sobre el `.env` local, porque dotenv no pisa lo que ya está definido.
+
+> **Protección de `main`** (se configura en GitHub, en Settings → Branches, no en el código): exige PR con **1 aprobación** y el check **`lint, typecheck y tests` en verde**, sin bypass para administradores. Evidencia: el PR **#6** (T2) pasó en verde, y el PR **#7** (un test roto a propósito) quedó en rojo con el merge bloqueado.
+
 ## 8. Desarrollo local con Docker
 
 Servicios del entorno local (se definen en la semana 1):
