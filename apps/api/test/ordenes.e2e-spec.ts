@@ -133,4 +133,147 @@ describe('Órdenes: reserva de asientos', () => {
       expect(await prisma.ordenItem.count({ where: { asientoId: asiento } })).toBe(1);
     });
   });
+
+  describe('contrato de POST /ordenes', () => {
+    let evento: { id: string; asientos: string[] };
+    let compradores: Usuario[];
+    // Un comprador por caso: RN-04 no deja a uno tener dos órdenes pendientes en el evento.
+    let siguiente = 0;
+    const comprador = () => compradores[siguiente++];
+
+    beforeAll(async () => {
+      evento = await eventoALaVenta(4, 5);
+      compradores = await fx.crearCompradores(15);
+    });
+
+    const ordenesDe = (usuario: Usuario) => prisma.orden.count({ where: { usuarioId: usuario.id } });
+
+    it('201: orden PENDIENTE_PAGO, total en centavos, precio congelado y vence en RESERVA_TTL_SEGUNDOS', async () => {
+      const usuario = comprador();
+      const asientos = [evento.asientos[2], evento.asientos[0]];
+
+      const res = await reservar(usuario, { eventoId: evento.id, asientoIds: asientos, nit: '1234567' }).expect(201);
+
+      expect(Object.keys(res.body).sort()).toEqual(
+        ['asientoIds', 'estado', 'eventoId', 'expiresAt', 'moneda', 'ordenId', 'totalCentavos'].sort(),
+      );
+      expect(res.body).toMatchObject({
+        eventoId: evento.id,
+        estado: 'PENDIENTE_PAGO',
+        asientoIds: [...asientos].sort(),
+        totalCentavos: 2 * PRECIO,
+        moneda: 'BOB',
+      });
+      expect(res.body.expiresAt).toMatch(/Z$/);
+
+      // El vencimiento lo pone el reloj de Postgres, no el de la API.
+      const orden = await prisma.orden.findUniqueOrThrow({ where: { id: res.body.ordenId }, include: { items: true } });
+      const [{ ahora }] = await prisma.$queryRaw<{ ahora: Date }[]>`SELECT now() AS ahora`;
+      const segundos = (orden.expiresAt.getTime() - ahora.getTime()) / 1000;
+      expect(segundos).toBeGreaterThan(290);
+      expect(segundos).toBeLessThanOrEqual(300);
+      expect(orden).toMatchObject({ usuarioId: usuario.id, totalCentavos: BigInt(2 * PRECIO), nit: '1234567' });
+      expect(orden.items.map((i) => i.precioCentavos)).toEqual([BigInt(PRECIO), BigInt(PRECIO)]);
+
+      // Orden y asientos vencen en el mismo instante (mismo now() de la transacción).
+      const filas = await prisma.asiento.findMany({ where: { id: { in: asientos } } });
+      for (const a of filas) {
+        expect(a).toMatchObject({ estado: 'RESERVADO', ordenId: orden.id, version: 1 });
+        expect(a.expiresAt?.getTime()).toBe(orden.expiresAt.getTime());
+      }
+    });
+
+    it('401: sin token', () => reservar(null, { eventoId: evento.id, asientoIds: [evento.asientos[3]] }).expect(401));
+
+    it.each(['organizadorA', 'validador', 'admin'] as const)('403: %s no compra', async (rol) => {
+      await reservar(fx.usuarios[rol], { eventoId: evento.id, asientoIds: [evento.asientos[3]] }).expect(403);
+      expect(await ordenesDe(fx.usuarios[rol])).toBe(0);
+    });
+
+    it.each([
+      ['sin Idempotency-Key', null],
+      ['Idempotency-Key que no es UUID', 'reintento-1'],
+    ])('400: %s', async (_caso, clave) => {
+      const usuario = comprador();
+      const res = await reservar(usuario, { eventoId: evento.id, asientoIds: [evento.asientos[3]] }, clave).expect(400);
+      expect(res.body.message).toBe('Falta el header Idempotency-Key o no es un UUID');
+      expect(await ordenesDe(usuario)).toBe(0);
+    });
+
+    it.each([
+      ['asientoIds vacío', () => ({ eventoId: evento.id, asientoIds: [] })],
+      ['7 asientos (RN-03)', () => ({ eventoId: evento.id, asientoIds: evento.asientos.slice(10, 17) })],
+      ['asientos repetidos', () => ({ eventoId: evento.id, asientoIds: [evento.asientos[3], evento.asientos[3]] })],
+      ['un asiento que no es UUID', () => ({ eventoId: evento.id, asientoIds: ['F-12'] })],
+      ['sin eventoId', () => ({ asientoIds: [evento.asientos[3]] })],
+      ['totalCentavos del cliente', () => ({ eventoId: evento.id, asientoIds: [evento.asientos[3]], totalCentavos: 1 })],
+    ])('400: %s', async (_caso, body) => {
+      const usuario = comprador();
+      await reservar(usuario, body()).expect(400);
+      expect(await ordenesDe(usuario)).toBe(0);
+    });
+
+    it('404: evento inexistente', async () => {
+      const res = await reservar(comprador(), { eventoId: randomUUID(), asientoIds: [randomUUID()] }).expect(404);
+      expect(res.body.message).toBe('Evento no encontrado');
+    });
+
+    it('404: un BORRADOR da el mismo 404 (no se revela que existe)', async () => {
+      const auth = `Bearer ${tokenDe(fx.usuarios.organizadorA)}`;
+      const borrador = await request(url)
+        .post('/eventos')
+        .set('Authorization', auth)
+        .send({
+          titulo: `Borrador ${randomUUID().slice(0, 8)}`,
+          recintoId: fx.recintoA.id,
+          inicio: enDias(30).toISOString(),
+          ventaInicio: enDias(-1).toISOString(),
+          zona: { nombre: 'Platea', precioCentavos: PRECIO, filas: 1, columnas: 1 },
+        })
+        .expect(201);
+      const asiento = await prisma.asiento.findFirstOrThrow({ where: { eventoId: borrador.body.id } });
+
+      const res = await reservar(comprador(), { eventoId: borrador.body.id, asientoIds: [asiento.id] }).expect(404);
+      expect(res.body.message).toBe('Evento no encontrado');
+      expect((await prisma.asiento.findUniqueOrThrow({ where: { id: asiento.id } })).estado).toBe('LIBRE');
+    });
+
+    it('409: un asiento de otro evento cuenta como no disponible', async () => {
+      const otro = await eventoALaVenta(1, 1);
+      const usuario = comprador();
+      const res = await reservar(usuario, { eventoId: evento.id, asientoIds: [otro.asientos[0]] }).expect(409);
+      expect(res.body).toMatchObject({ codigo: 'ASIENTOS_NO_DISPONIBLES', noDisponibles: [otro.asientos[0]] });
+      expect(await ordenesDe(usuario)).toBe(0);
+      expect((await prisma.asiento.findUniqueOrThrow({ where: { id: otro.asientos[0] } })).estado).toBe('LIBRE');
+    });
+
+    it('409: un asiento NO_DISPONIBLE (pasillo) no se reserva', async () => {
+      const pasillo = evento.asientos[19];
+      await prisma.asiento.update({ where: { id: pasillo }, data: { estado: 'NO_DISPONIBLE' } });
+      await reservar(comprador(), { eventoId: evento.id, asientoIds: [pasillo] }).expect(409);
+    });
+
+    it('todo o nada (RN-03): {libre, ocupado} → 409 solo con el ocupado; el libre queda intacto y no hay orden', async () => {
+      const [ocupado, libre] = [evento.asientos[5], evento.asientos[6]];
+      await reservar(comprador(), { eventoId: evento.id, asientoIds: [ocupado] }).expect(201);
+
+      const usuario = comprador();
+      const res = await reservar(usuario, { eventoId: evento.id, asientoIds: [libre, ocupado] }).expect(409);
+
+      // Solo QUÉ asiento falta: nada de a quién pertenece.
+      expect(res.body).toEqual({
+        statusCode: 409,
+        error: 'Conflict',
+        codigo: 'ASIENTOS_NO_DISPONIBLES',
+        message: 'Algunos asientos ya no están disponibles',
+        noDisponibles: [ocupado],
+      });
+      expect(await prisma.asiento.findUniqueOrThrow({ where: { id: libre } })).toMatchObject({
+        estado: 'LIBRE',
+        ordenId: null,
+        version: 0,
+      });
+      expect(await ordenesDe(usuario)).toBe(0);
+    });
+  });
 });

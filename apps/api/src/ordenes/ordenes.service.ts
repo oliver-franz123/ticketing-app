@@ -1,12 +1,17 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type { UsuarioAutenticado } from '../auth/tipos';
 import { aNumero } from '../catalogo/a-numero';
+import { EstadoEvento } from '../catalogo/estados-evento';
 import { InventarioService } from '../inventario/inventario.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CrearOrdenDto } from './dto/crear-orden.dto';
 import { RESERVA_TTL_SEGUNDOS_POR_DEFECTO } from './limites';
+
+interface EventoALaVenta {
+  estado: string;
+}
 
 interface OrdenInsertada {
   id: string;
@@ -48,6 +53,14 @@ export class OrdenesService {
 
     return this.prisma.$transaction(
       async (tx) => {
+        // A. El evento tiene que estar a la venta. Un BORRADOR da el mismo 404
+        // que un id inexistente, como en el mapa.
+        const [evento] = await tx.$queryRaw<EventoALaVenta[]>`
+          SELECT estado FROM eventos WHERE id = ${eventoId}::uuid`;
+        if (!evento || evento.estado === EstadoEvento.BORRADOR) {
+          throw new NotFoundException('Evento no encontrado');
+        }
+
         // 1. La orden primero: asientos.orden_id es una FK normal (no diferible).
         // El total sale del precio de cada zona al reservar (RN-05). COALESCE: si
         // ningún asiento es del evento, sum da NULL; con 0 se inserta y el paso 2
