@@ -9,8 +9,9 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { firmaSimulador, SECRETO_SIMULADOR } from './firma-simulador-prueba';
 import { crearFixtures, enDias, type Fixtures, SECRETO, tokenDe } from './fixtures-eventos';
 
-// Webhook de pago idempotente y re-captura (doc 04 §4.3, doc 05 §4, ADR-0004)
-// contra el Postgres real. El pago EN_PROCESO se inserta con Prisma y el test
+// Pagos contra el Postgres real: webhook idempotente y re-captura (doc 04 §4.3,
+// doc 05 §4, ADR-0004) y POST /ordenes/:id/pago con el simulador (ADR-0015).
+// En los tests del webhook el pago EN_PROCESO se inserta con Prisma y el test
 // firma el webhook a mano: así se prueba solo la confirmación, sin el simulador.
 type Usuario = { id: string; rol: Rol };
 type OrdenCreada = { ordenId: string; totalCentavos: number };
@@ -31,6 +32,9 @@ describe('Pagos: webhook del simulador', () => {
     app = configurarApp(modulo.createNestApplication({ rawBody: true }));
     await app.listen(0, '127.0.0.1');
     url = await app.getUrl();
+    // SimuladorAdapter llama por HTTP a esta misma app (ADR-0015): el puerto es
+    // aleatorio, así que la URL pública se fija después de listen.
+    process.env.API_PUBLIC_URL = url;
     prisma = app.get(PrismaService);
     fx = await crearFixtures(prisma);
   });
@@ -392,6 +396,144 @@ describe('Pagos: webhook del simulador', () => {
         webhooks: antes.webhooks + 2,
       });
       expect(final.outbox).toEqual([{ tipo: 'ENTRADAS_EMITIDAS' }]);
+    });
+  });
+
+  describe('POST /ordenes/:id/pago', () => {
+    // Absoluta (el navegador viene desde la web, otro dominio) y con una
+    // referencia que no se puede adivinar: la página del simulador es pública.
+    const URL_DE_PAGO = /\/simulador\/pagar\/(sim_pay_[0-9a-f]{32})$/;
+    const referenciaDe = (redirectUrl: string) => URL_DE_PAGO.exec(redirectUrl)![1];
+
+    const pagar = (usuario: Usuario | null, ordenId: string) => {
+      let req = request(url).post(`/ordenes/${ordenId}/pago`);
+      if (usuario) req = req.set('Authorization', `Bearer ${tokenDe(usuario)}`);
+      return req;
+    };
+
+    const ordenReservada = async () => {
+      const evento = await eventoALaVenta();
+      const [ana] = await fx.crearCompradores(1);
+      const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
+      return { ana, orden };
+    };
+
+    const pagosDe = (orden: OrdenCreada) =>
+      prisma.pago.findMany({
+        where: { ordenId: orden.ordenId },
+        select: { proveedor: true, referenciaExterna: true, estado: true, montoCentavos: true },
+        orderBy: { creadoEn: 'asc' },
+      });
+
+    it('200 {proveedor, redirectUrl}: pago EN_PROCESO en la API y PENDIENTE en el simulador', async () => {
+      const { ana, orden } = await ordenReservada();
+      const res = await pagar(ana, orden.ordenId).expect(200);
+
+      expect(res.body).toEqual({ proveedor: 'simulador', redirectUrl: expect.stringMatching(URL_DE_PAGO) });
+      expect(res.body.redirectUrl.startsWith(`${url}/simulador/pagar/`)).toBe(true);
+      const referencia = referenciaDe(res.body.redirectUrl);
+      expect(await pagosDe(orden)).toEqual([
+        {
+          proveedor: 'simulador',
+          referenciaExterna: referencia,
+          estado: 'EN_PROCESO',
+          montoCentavos: BigInt(orden.totalCentavos),
+        },
+      ]);
+      // El simulador guardó su propio registro: otro "sistema", sin FK a nada.
+      // enviar_en NULL: no hay nada que enviar hasta que el comprador confirme.
+      expect(await prisma.simuladorPago.findUnique({ where: { referencia } })).toMatchObject({
+        ordenId: orden.ordenId,
+        montoCentavos: BigInt(orden.totalCentavos),
+        moneda: 'BOB',
+        estado: 'PENDIENTE',
+        enviarEn: null,
+      });
+    });
+
+    it('401 sin JWT, 403 si no es COMPRADOR y 400 si el id no es un UUID', async () => {
+      const { ana, orden } = await ordenReservada();
+      await pagar(null, orden.ordenId).expect(401);
+      await pagar(fx.usuarios.organizadorA, orden.ordenId).expect(403);
+      await pagar(ana, 'no-es-un-uuid').expect(400);
+      expect(await pagosDe(orden)).toEqual([]);
+    });
+
+    it('404 con el mismo mensaje si la orden no existe o es de otro comprador', async () => {
+      const { orden } = await ordenReservada();
+      const [beto] = await fx.crearCompradores(1);
+
+      const ajena = await pagar(beto, orden.ordenId).expect(404);
+      const inexistente = await pagar(beto, randomUUID()).expect(404);
+
+      // El mensaje propio y no el "Cannot POST" de una ruta que no existe.
+      expect(ajena.body.message).toBe('Orden no encontrada');
+      expect(inexistente.body).toEqual(ajena.body);
+      expect(await pagosDe(orden)).toEqual([]);
+    });
+
+    it.each([
+      ['venció (sin que corra el job)', (o: OrdenCreada) => vencer(o)],
+      [
+        'ya está EXPIRADA',
+        (o: OrdenCreada) => prisma.$executeRaw`UPDATE ordenes SET estado = 'EXPIRADA' WHERE id = ${o.ordenId}::uuid`,
+      ],
+    ])('una orden que %s → 409 ORDEN_NO_PAGABLE sin crear pagos', async (_caso, preparar) => {
+      const { ana, orden } = await ordenReservada();
+      await preparar(orden);
+
+      const res = await pagar(ana, orden.ordenId).expect(409);
+      expect(res.body.codigo).toBe('ORDEN_NO_PAGABLE');
+      expect(await pagosDe(orden)).toEqual([]);
+    });
+
+    it('doble clic: dos POST en paralelo → el mismo redirectUrl, el del pago guardado', async () => {
+      const { ana, orden } = await ordenReservada();
+      await calentar(2);
+
+      const respuestas = await Promise.all(
+        [1, 2].map(async () => {
+          const r = await fetch(`${url}/ordenes/${orden.ordenId}/pago`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${tokenDe(ana)}` },
+          });
+          return { status: r.status, body: (await r.json()) as { proveedor: string; redirectUrl: string } };
+        }),
+      );
+
+      expect(respuestas.map((r) => r.status)).toEqual([200, 200]);
+      // El perdedor devuelve la URL del ganador, armada desde la referencia guardada.
+      expect(respuestas[1].body).toEqual(respuestas[0].body);
+      // Nunca dos cobros vivos para la misma orden. (El simulador puede tener
+      // una fila de más, PENDIENTE para siempre: un intento abandonado.)
+      const pagos = await pagosDe(orden);
+      expect(pagos.map((p) => p.estado)).toEqual(['EN_PROCESO']);
+      expect(referenciaDe(respuestas[0].body.redirectUrl)).toBe(pagos[0].referenciaExterna);
+    });
+
+    it('de punta a punta: pagar → webhook firmado con esa referencia → PAGADA; pagar de nuevo → 409', async () => {
+      const { ana, orden } = await ordenReservada();
+      const referencia = referenciaDe((await pagar(ana, orden.ordenId).expect(200)).body.redirectUrl);
+
+      expect(await enviar(webhook(orden, referencia))).toBe(200);
+      expect(await estadoDe(orden)).toMatchObject({ orden: 'PAGADA', pagos: [{ estado: 'CONFIRMADO' }], entradas: 2 });
+
+      const otraVez = await pagar(ana, orden.ordenId).expect(409);
+      expect(otraVez.body.codigo).toBe('ORDEN_NO_PAGABLE');
+    });
+
+    it('tras un rechazo se puede reintentar: un pago nuevo con otra referencia', async () => {
+      const { ana, orden } = await ordenReservada();
+      const primera = referenciaDe((await pagar(ana, orden.ordenId).expect(200)).body.redirectUrl);
+      expect(await enviar(webhook(orden, primera, { tipo: 'pago.fallido' }))).toBe(200);
+
+      const segunda = referenciaDe((await pagar(ana, orden.ordenId).expect(200)).body.redirectUrl);
+
+      expect(segunda).not.toBe(primera);
+      expect((await pagosDe(orden)).map((p) => [p.referenciaExterna, p.estado])).toEqual([
+        [primera, 'FALLIDO'],
+        [segunda, 'EN_PROCESO'],
+      ]);
     });
   });
 });
