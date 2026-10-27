@@ -58,6 +58,14 @@ jobs:
       # Secreto SOLO de prueba (≥ 32 bytes). Nunca un secreto real aquí.
       JWT_SECRET: ci-secreto-de-prueba-no-usar-en-produccion-0123456789
       JWT_EXPIRES_IN: 60m
+      # Pagos (ADR-0015): el simulador es el único proveedor en CI.
+      SIMULADOR_HABILITADO: "true"
+      PAYMENT_PROVIDERS: simulador
+      PAYMENT_PROVIDER_DEFAULT: simulador
+      # Los e2e la pisan con el puerto donde escucha la app de prueba.
+      API_PUBLIC_URL: http://127.0.0.1:3000
+      # Secreto SOLO de prueba (57 bytes ≥ 32). Nunca un secreto real aquí.
+      SIMULADOR_WEBHOOK_SECRET: ci-secreto-simulador-de-prueba-no-usar-en-produccion-0123
 
     steps:
       - uses: actions/checkout@v7
