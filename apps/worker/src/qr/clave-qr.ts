@@ -1,6 +1,9 @@
 import type { ConfigService } from '@nestjs/config';
 import { createPrivateKey, type KeyObject } from 'node:crypto';
 
+// Token de inyección de la clave privada (worker.module.ts la crea con leerClavePrivadaQr).
+export const CLAVE_QR = Symbol('CLAVE_QR');
+
 const COMO_GENERARLA = 'Generarla con: npm run claves:qr -w @entradas/worker';
 
 // Solo el Worker tiene la clave privada del QR (ADR-0011). Sin ella no puede
