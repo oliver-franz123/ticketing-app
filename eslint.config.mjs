@@ -10,4 +10,9 @@ export default defineConfig(
   },
   js.configs.recommended,
   tseslint.configs.recommended,
+  // Scripts sueltos de Node (scripts/*.mjs): sin TypeScript, no-undef sigue activo.
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: { console: 'readonly', fetch: 'readonly', performance: 'readonly', URL: 'readonly' } },
+  },
 );
