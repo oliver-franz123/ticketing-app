@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { CorreoService } from './email/correo.service';
 import { EmitirEntradas } from './entradas/emitir-entradas';
 import { OutboxRepositorio } from './outbox/outbox.repositorio';
 import { ProcesadorOutbox } from './outbox/outbox.procesador';
@@ -18,6 +19,7 @@ import { RegistrarReembolso } from './reembolsos/registrar-reembolso';
     { provide: CLAVE_QR, inject: [ConfigService], useFactory: leerClavePrivadaQr },
     OutboxRepositorio,
     ProcesadorOutbox,
+    CorreoService,
     EmitirEntradas,
     RegistrarReembolso,
   ],
