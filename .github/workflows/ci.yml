@@ -46,6 +46,17 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      # SMTP de prueba para los e2e del Worker (W-02): se consulta por su API HTTP.
+      mailpit:
+        image: axllent/mailpit
+        ports:
+          - 1025:1025
+          - 8025:8025
+        options: >-
+          --health-cmd "/mailpit readyz"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
 
     # Todo apunta a los service containers. No hay .env en CI: dotenv no pisa
     # estas variables y Nest las lee de process.env.
@@ -66,6 +77,10 @@ jobs:
       API_PUBLIC_URL: http://127.0.0.1:3000
       # Secreto SOLO de prueba (57 bytes ≥ 32). Nunca un secreto real aquí.
       SIMULADOR_WEBHOOK_SECRET: ci-secreto-simulador-de-prueba-no-usar-en-produccion-0123
+      # Email del Worker: Mailpit (SMTP) y su API para que los tests lean lo enviado.
+      SMTP_URL: smtp://localhost:1025
+      MAILPIT_URL: http://localhost:8025
+      EMAIL_FROM: Entradas <entradas@localhost>
 
     steps:
       - uses: actions/checkout@v7
@@ -76,6 +91,14 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # Par Ed25519 efímero, solo para esta corrida (ADR-0011): nunca hay claves en el repo.
+      - name: Claves QR de prueba
+        run: |
+          node apps/worker/scripts/generar-claves-qr.mjs > claves-qr.env
+          echo "::add-mask::$(sed -n 's/^QR_SIGNING_PRIVATE_KEY=//p' claves-qr.env)"
+          cat claves-qr.env >> "$GITHUB_ENV"
+          rm claves-qr.env
 
       - name: Build de shared y db
         run: npm run build -w @entradas/shared -w @entradas/db
