@@ -66,11 +66,22 @@ export async function crearFixtures(prisma: PrismaService) {
     });
   };
 
+  // Prefijo de las referencias y eventos de pago de esta corrida. webhook_eventos
+  // no tiene FK a nada (el evento puede llegar antes que el pago): se borra por id.
+  const prefijoPagos = `e2e_${sufijo}`;
+
   const limpiar = async () => {
     const recintos = [recintoA.id, recintoB.id];
     const eventos = { evento: { recintoId: { in: recintos } } };
+    const ordenes = (await prisma.orden.findMany({ where: eventos, select: { id: true } })).map((o) => o.id);
     // Orden inverso a las FK (todas son RESTRICT). Los asientos apuntan a las
     // órdenes: se borran antes que ellas.
+    await prisma.entrada.deleteMany({ where: { ordenId: { in: ordenes } } });
+    await prisma.pago.deleteMany({ where: { ordenId: { in: ordenes } } });
+    // outbox y simulador_pagos no tienen FK: el payload solo lleva IDs.
+    await prisma.$executeRaw`DELETE FROM outbox WHERE payload->>'ordenId' = ANY(${ordenes}::text[])`;
+    await prisma.simuladorPago.deleteMany({ where: { ordenId: { in: ordenes } } });
+    await prisma.webhookEvento.deleteMany({ where: { eventoExternoId: { contains: prefijoPagos } } });
     await prisma.ordenItem.deleteMany({ where: { orden: eventos } });
     await prisma.asiento.deleteMany({ where: eventos });
     await prisma.orden.deleteMany({ where: eventos });
@@ -81,7 +92,7 @@ export async function crearFixtures(prisma: PrismaService) {
     await prisma.usuario.deleteMany({ where: { email: { endsWith: `${sufijo}${DOMINIO}` } } });
   };
 
-  return { ciudadA, ciudadB, recintoA, recintoB, usuarios, crearCompradores, limpiar };
+  return { ciudadA, ciudadB, recintoA, recintoB, usuarios, crearCompradores, prefijoPagos, limpiar };
 }
 
 export type Fixtures = Awaited<ReturnType<typeof crearFixtures>>;
