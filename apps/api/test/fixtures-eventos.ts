@@ -76,6 +76,8 @@ export async function crearFixtures(prisma: PrismaService) {
     const ordenes = (await prisma.orden.findMany({ where: eventos, select: { id: true } })).map((o) => o.id);
     // Orden inverso a las FK (todas son RESTRICT). Los asientos apuntan a las
     // órdenes: se borran antes que ellas.
+    // envios_email lo escribe el Worker: aquí solo si un test lo dejó.
+    await prisma.envioEmail.deleteMany({ where: { ordenId: { in: ordenes } } });
     await prisma.entrada.deleteMany({ where: { ordenId: { in: ordenes } } });
     await prisma.pago.deleteMany({ where: { ordenId: { in: ordenes } } });
     // outbox y simulador_pagos no tienen FK: el payload solo lleva IDs.
