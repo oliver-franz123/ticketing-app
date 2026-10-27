@@ -26,7 +26,7 @@ const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: proc
 try {
   const total = await sembrar(prisma, password);
   console.log(
-    `✓ Semillas: ${total.departamentos} departamentos, ${total.ciudades} ciudades y ${total.usuarios} usuarios.`,
+    `✓ Semillas: ${total.departamentos} departamentos, ${total.ciudades} ciudades, ${total.recintos} recintos y ${total.usuarios} usuarios.`,
   );
 } catch (error) {
   // exitCode y no salir(): el finally tiene que cerrar la conexión.

@@ -17,7 +17,8 @@
     "lint": "eslint .",
     "test": "npm run test --workspaces --if-present",
     "test:e2e": "npm run test:e2e --workspaces --if-present",
-    "seed": "npm run seed -w @entradas/db --"
+    "seed": "npm run seed -w @entradas/db --",
+    "demo:carrera": "node scripts/carrera.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

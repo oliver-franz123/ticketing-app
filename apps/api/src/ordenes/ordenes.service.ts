@@ -16,6 +16,15 @@ interface EventoALaVenta {
   no_empezo: boolean;
 }
 
+interface OrdenVista {
+  id: string;
+  evento_id: string;
+  estado: string;
+  total_centavos: bigint;
+  moneda: string;
+  expires_at: Date;
+}
+
 interface OrdenInsertada {
   id: string;
   expires_at: Date;
@@ -136,6 +145,36 @@ export class OrdenesService {
       },
       { maxWait: 5000, timeout: 5000 },
     );
+  }
+
+  // Detalle para la página de la orden (la web hace polling hasta PAGADA). Solo
+  // el dueño: el usuario va en el WHERE, así que una orden ajena da el mismo 404
+  // que una inexistente (A-02). Expiración perezosa también aquí: una
+  // PENDIENTE_PAGO vencida se informa como EXPIRADA aunque el job no haya
+  // corrido, con now() de Postgres. Solo lectura: no la marca.
+  async obtener(usuario: UsuarioAutenticado, id: string) {
+    const [orden] = await this.prisma.$queryRaw<OrdenVista[]>`
+      SELECT id, evento_id, total_centavos, moneda, expires_at,
+             CASE WHEN estado = 'PENDIENTE_PAGO' AND expires_at < now() THEN 'EXPIRADA' ELSE estado END AS estado
+        FROM ordenes
+       WHERE id = ${id}::uuid AND usuario_id = ${usuario.id}::uuid`;
+    if (!orden) throw new NotFoundException('Orden no encontrada');
+
+    const asientos = await this.prisma.$queryRaw<{ id: string; fila: string; columna: number }[]>`
+      SELECT a.id, a.fila, a.columna
+        FROM orden_items i JOIN asientos a ON a.id = i.asiento_id
+       WHERE i.orden_id = ${id}::uuid
+       ORDER BY length(a.fila), a.fila, a.columna`;
+
+    return {
+      ordenId: orden.id,
+      eventoId: orden.evento_id,
+      estado: orden.estado,
+      asientos,
+      totalCentavos: aNumero(orden.total_centavos),
+      moneda: orden.moneda,
+      expiresAt: orden.expires_at,
+    };
   }
 
   // El INSERT chocó con una clave única. Si este usuario ya tiene una orden con

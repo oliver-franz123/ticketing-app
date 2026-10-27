@@ -2,7 +2,7 @@ import path from 'node:path';
 import { config } from 'dotenv';
 import { afterAll, describe, expect, it } from 'vitest';
 import { PrismaClient, PrismaPg } from '../dist/index.js';
-import { CIUDADES, DEPARTAMENTOS, USUARIOS } from '../prisma/semillas/datos.mts';
+import { CIUDADES, DEPARTAMENTOS, RECINTOS, USUARIOS } from '../prisma/semillas/datos.mts';
 import { sembrar } from '../prisma/semillas/sembrar.mts';
 
 // Contra el Postgres de docker compose (local) o el service de CI. No limpia al
@@ -19,6 +19,11 @@ const foto = async () => ({
   ciudades: await prisma.ciudad.findMany({
     where: { slug: { in: CIUDADES.map((c) => c.slug) } },
     orderBy: { slug: 'asc' },
+  }),
+  recintos: await prisma.recinto.findMany({
+    where: { id: { in: RECINTOS.map((r) => r.id) } },
+    include: { ciudad: { select: { slug: true } } },
+    orderBy: { id: 'asc' },
   }),
   usuarios: await prisma.usuario.findMany({
     where: { email: { in: USUARIOS.map((u) => u.email) } },
@@ -39,6 +44,7 @@ describe('semillas (T7)', () => {
 
     expect(primera.departamentos).toHaveLength(9);
     expect(primera.ciudades).toHaveLength(7);
+    expect(primera.recintos.map((r) => r.ciudad.slug)).toEqual(['cochabamba', 'cochabamba']);
     expect(primera.usuarios.map((u) => u.rol).sort()).toEqual(['ADMIN', 'COMPRADOR', 'ORGANIZADOR', 'VALIDADOR']);
     expect(segunda).toEqual(primera);
   });

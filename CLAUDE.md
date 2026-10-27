@@ -58,6 +58,29 @@ Scrum adaptado con **sprints semanales**. **TDD** en concurrencia e idempotencia
 - Webhook duplicado: una sola entrada.
 - Logs y métricas visibles.
 
+## Estado actual y pendientes (2026-10-27)
+
+**Hecho en main:**
+- Auth propia (registro, login, JWT con rol, guards globales `@Publico`/`@Roles`).
+- Catálogo: `POST /eventos` (grilla en una transacción), publicar, `GET /eventos?ciudad=`, mapa REST `GET /eventos/:id/asientos`.
+- Reserva atómica `POST /ordenes` con `Idempotency-Key` (C-01..C-04, C-06..C-08, RN-09).
+- Pago con el **simulador** + webhook firmado e idempotente (`UNIQUE(proveedor, evento_externo_id)`), modos OK/RECHAZO/DUPLICAR/DEMORA/DESORDEN.
+- Worker: lee el outbox (`FOR UPDATE SKIP LOCKED` + lease) → QR Ed25519 + PDF + email (Mailpit en local).
+- CI (lint, typecheck, unit, e2e contra Postgres/Redis/Mailpit reales) y protección de main (1 aprobación + CI verde).
+
+**En curso (demo local):** `scripts/carrera.mjs` (50 → 1), `GET /recintos`, `POST /validaciones` (CAS `WHERE estado='EMITIDA'`), `GET /ordenes/:id`, web mínima en `apps/web` y README con guion de demo.
+
+**Pendiente o recortado:**
+- `DELETE /ordenes/:id` y job `liberar-vencidas` (la expiración perezosa ya libera en la consulta).
+- **WebSocket recortado:** la web refresca el mapa por polling cada 5 s. ADR-0007 queda como diseño, sin implementar.
+- Asignación de validadores (`evento_validadores`, RF-53): recortada. `POST /validaciones` recibe `{qr, eventoId}` y el validador elige en qué evento trabaja; `OTRO_EVENTO` = el QR es de otro evento.
+- Rate limit con Redis, `/metrics`, panel `/admin/demo`, mis-entradas y PDF por la API, `StripeTest`.
+
+**Decisiones vigentes que cambian lo que dicen los docs viejos:**
+- **BullMQ diferido** (ADR-0017): el Worker consume el outbox directamente; Redis se mantiene para Socket.IO/rate limit futuros.
+- **WebSocket recortado** para la demo (polling).
+- **Simulador como proveedor principal** de pagos (ADR-0015); Stripe opcional, QR bancario futuro.
+
 ## Mapa de documentos
 
 `docs/00` resumen docente · `01` visión · `02` requisitos · `03` arquitectura · `04` concurrencia · `05` comunicación e idempotencia · `06` carga · `07` despliegue · `08` patrones · `09` modelo de datos · `10` pruebas y demo · `11` plan · `12` glosario · `13` pagos en Bolivia · `adr/`

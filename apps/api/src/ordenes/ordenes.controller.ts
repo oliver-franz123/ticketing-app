@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { Rol } from '@entradas/db';
 import { Roles, UsuarioActual } from '../auth/decoradores';
 import type { UsuarioAutenticado } from '../auth/tipos';
@@ -25,6 +25,14 @@ export class OrdenesController {
     @Body() datos: CrearOrdenDto,
   ) {
     return this.ordenes.crear(usuario, clave, datos);
+  }
+
+  // Estado de la orden para la web (polling hasta PAGADA). Solo el dueño: una
+  // orden ajena da el mismo 404 que una inexistente.
+  @Roles(Rol.COMPRADOR)
+  @Get(':id')
+  obtener(@UsuarioActual() usuario: UsuarioAutenticado, @Param('id', ParseUUIDPipe) id: string) {
+    return this.ordenes.obtener(usuario, id);
   }
 
   // Inicia el pago (doc 05 §4): crea el intento en el proveedor y devuelve

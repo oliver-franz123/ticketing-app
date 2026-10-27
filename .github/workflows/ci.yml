@@ -93,10 +93,14 @@ jobs:
       - run: npm ci
 
       # Par Ed25519 efímero, solo para esta corrida (ADR-0011): nunca hay claves en el repo.
+      # Exporta las DOS: la privada la usa el Worker (firma) y la pública la API
+      # (POST /validaciones; sin ella la API no arranca). La pública no es secreta.
       - name: Claves QR de prueba
         run: |
           node apps/worker/scripts/generar-claves-qr.mjs > claves-qr.env
           echo "::add-mask::$(sed -n 's/^QR_SIGNING_PRIVATE_KEY=//p' claves-qr.env)"
+          grep -q '^QR_SIGNING_PRIVATE_KEY=.' claves-qr.env
+          grep -q '^QR_SIGNING_PUBLIC_KEY=.' claves-qr.env
           cat claves-qr.env >> "$GITHUB_ENV"
           rm claves-qr.env
 

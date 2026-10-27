@@ -1,6 +1,6 @@
 import { argon2id, hash } from 'argon2';
 import type { PrismaClient } from '../../dist/index.js';
-import { CIUDADES, DEPARTAMENTOS, USUARIOS } from './datos.mts';
+import { CIUDADES, DEPARTAMENTOS, RECINTOS, USUARIOS } from './datos.mts';
 
 // Los mismos parámetros que apps/api/src/auth/hash.service.ts: si cambian allá,
 // cambiarlos aquí. El login verifica igual (los parámetros van dentro del hash).
@@ -8,7 +8,7 @@ const OPCIONES = { type: argon2id, memoryCost: 19_456, timeCost: 2, parallelism:
 
 export const MIN_PASSWORD = 8; // igual que registro.dto.ts
 
-// Idempotente: todo es upsert sobre claves únicas (codigo, slug, email), así
+// Idempotente: todo es upsert sobre claves únicas (codigo, slug, email, id del recinto), así
 // que correrla dos veces deja las mismas filas con los mismos ids.
 export async function sembrar(prisma: PrismaClient, password: string) {
   if (password.length < MIN_PASSWORD) {
@@ -29,12 +29,23 @@ export async function sembrar(prisma: PrismaClient, password: string) {
       idDepartamento.set(codigo, id);
     }
 
+    const idCiudad = new Map<string, number>();
     for (const { departamento, nombre, slug } of CIUDADES) {
       const departamentoId = idDepartamento.get(departamento)!;
-      await tx.ciudad.upsert({
+      const { id } = await tx.ciudad.upsert({
         where: { slug },
         update: { nombre, departamentoId },
         create: { nombre, slug, departamentoId },
+      });
+      idCiudad.set(slug, id);
+    }
+
+    for (const { id, ciudad, nombre, direccion } of RECINTOS) {
+      const ciudadId = idCiudad.get(ciudad)!;
+      await tx.recinto.upsert({
+        where: { id },
+        update: { nombre, direccion, ciudadId },
+        create: { id, nombre, direccion, ciudadId },
       });
     }
 
@@ -47,6 +58,11 @@ export async function sembrar(prisma: PrismaClient, password: string) {
       });
     }
 
-    return { departamentos: DEPARTAMENTOS.length, ciudades: CIUDADES.length, usuarios: USUARIOS.length };
+    return {
+      departamentos: DEPARTAMENTOS.length,
+      ciudades: CIUDADES.length,
+      recintos: RECINTOS.length,
+      usuarios: USUARIOS.length,
+    };
   });
 }
