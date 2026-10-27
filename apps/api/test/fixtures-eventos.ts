@@ -80,8 +80,15 @@ export async function crearFixtures(prisma: PrismaService) {
     await prisma.pago.deleteMany({ where: { ordenId: { in: ordenes } } });
     // outbox y simulador_pagos no tienen FK: el payload solo lleva IDs.
     await prisma.$executeRaw`DELETE FROM outbox WHERE payload->>'ordenId' = ANY(${ordenes}::text[])`;
+    // Los eventos que envía el simulador se llaman sim_evt_<hex de la referencia>_…:
+    // se buscan por las referencias antes de borrar simulador_pagos.
+    const delSimulador = (
+      await prisma.simuladorPago.findMany({ where: { ordenId: { in: ordenes } }, select: { referencia: true } })
+    ).map((p) => ({ eventoExternoId: { startsWith: p.referencia.replace('sim_pay_', 'sim_evt_') } }));
+    await prisma.webhookEvento.deleteMany({
+      where: { OR: [{ eventoExternoId: { contains: prefijoPagos } }, ...delSimulador] },
+    });
     await prisma.simuladorPago.deleteMany({ where: { ordenId: { in: ordenes } } });
-    await prisma.webhookEvento.deleteMany({ where: { eventoExternoId: { contains: prefijoPagos } } });
     await prisma.ordenItem.deleteMany({ where: { orden: eventos } });
     await prisma.asiento.deleteMany({ where: eventos });
     await prisma.orden.deleteMany({ where: eventos });

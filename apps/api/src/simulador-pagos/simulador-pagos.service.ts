@@ -4,6 +4,14 @@ import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CrearPagoSimuladorDto } from './dto/crear-pago-simulador.dto';
 
+export interface ResultadoDespacho {
+  referencia: string;
+  // Envíos HTTP en este despacho: DUPLICAR ×N manda N, DESORDEN manda 2.
+  envios: number;
+  // true si TODOS respondieron 2xx.
+  entregado: boolean;
+}
+
 // Proveedor de pagos simulado (ADR-0015). Se comporta como un tercero: dueño
 // solo de simulador_pagos, sin FK ni servicios de Órdenes o Pagos. Por ahora
 // solo crea intentos; la página, los modos y el envío del webhook llegan después.
@@ -33,6 +41,11 @@ export class SimuladorPagosService {
       },
     });
     return { referencia, redirectUrl: this.urlDePago(referencia) };
+  }
+
+  // Stub del rojo (commit 7): no despacha nada. Se implementa en el verde.
+  despacharPendientes(): Promise<ResultadoDespacho[]> {
+    return Promise.resolve([]);
   }
 
   // Su propia URL pública, como la de cualquier proveedor. Se lee en cada uso,

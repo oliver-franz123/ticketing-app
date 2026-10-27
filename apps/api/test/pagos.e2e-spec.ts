@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Rol } from '@entradas/db';
+import { MODOS_SIMULADOR } from '@entradas/shared';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createServer as crearServidorHttp } from 'node:http';
 import { type AddressInfo, createServer } from 'node:net';
@@ -8,6 +9,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { configurarApp } from '../src/configurar-app';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { SimuladorPagosService } from '../src/simulador-pagos/simulador-pagos.service';
 import { firmaSimulador, SECRETO_SIMULADOR } from './firma-simulador-prueba';
 import { crearFixtures, enDias, type Fixtures, SECRETO, tokenDe } from './fixtures-eventos';
 
@@ -29,6 +31,8 @@ describe('Pagos: webhook del simulador', () => {
   beforeAll(async () => {
     process.env.JWT_SECRET = SECRETO;
     process.env.SIMULADOR_WEBHOOK_SECRET = SECRETO_SIMULADOR;
+    // Sin tick automático: cada test despacha a mano y sabe cuándo sale cada webhook.
+    process.env.SIMULADOR_TICK_MS = '0';
     const modulo = await Test.createTestingModule({ imports: [AppModule] }).compile();
     // rawBody: la firma se verifica sobre los bytes exactos, no sobre el JSON re-serializado.
     app = configurarApp(modulo.createNestApplication({ rawBody: true }));
@@ -150,6 +154,31 @@ describe('Pagos: webhook del simulador', () => {
     await prisma.$executeRaw`UPDATE ordenes SET expires_at = now() - interval '1 second' WHERE id = ${orden.ordenId}::uuid`;
     await prisma.$executeRaw`UPDATE asientos SET expires_at = now() - interval '1 second' WHERE orden_id = ${orden.ordenId}::uuid AND estado = 'RESERVADO'`;
   };
+
+  // Absoluta (el navegador viene desde la web, otro dominio) y con una
+  // referencia que no se puede adivinar: la página del simulador es pública.
+  const URL_DE_PAGO = /\/simulador\/pagar\/(sim_pay_[0-9a-f]{32})$/;
+  const referenciaDe = (redirectUrl: string) => URL_DE_PAGO.exec(redirectUrl)![1];
+
+  const pagar = (usuario: Usuario | null, ordenId: string) => {
+    let req = request(url).post(`/ordenes/${ordenId}/pago`);
+    if (usuario) req = req.set('Authorization', `Bearer ${tokenDe(usuario)}`);
+    return req;
+  };
+
+  const ordenReservada = async () => {
+    const evento = await eventoALaVenta();
+    const [ana] = await fx.crearCompradores(1);
+    const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
+    return { ana, orden };
+  };
+
+  const pagosDe = (orden: OrdenCreada) =>
+    prisma.pago.findMany({
+      where: { ordenId: orden.ordenId },
+      select: { proveedor: true, referenciaExterna: true, estado: true, montoCentavos: true },
+      orderBy: { creadoEn: 'asc' },
+    });
 
   describe('P-01: webhook duplicado', () => {
     it('el mismo webhook ×5 en paralelo → 5 × 200, 1 registro y la orden PAGADA una sola vez', async () => {
@@ -402,31 +431,6 @@ describe('Pagos: webhook del simulador', () => {
   });
 
   describe('POST /ordenes/:id/pago', () => {
-    // Absoluta (el navegador viene desde la web, otro dominio) y con una
-    // referencia que no se puede adivinar: la página del simulador es pública.
-    const URL_DE_PAGO = /\/simulador\/pagar\/(sim_pay_[0-9a-f]{32})$/;
-    const referenciaDe = (redirectUrl: string) => URL_DE_PAGO.exec(redirectUrl)![1];
-
-    const pagar = (usuario: Usuario | null, ordenId: string) => {
-      let req = request(url).post(`/ordenes/${ordenId}/pago`);
-      if (usuario) req = req.set('Authorization', `Bearer ${tokenDe(usuario)}`);
-      return req;
-    };
-
-    const ordenReservada = async () => {
-      const evento = await eventoALaVenta();
-      const [ana] = await fx.crearCompradores(1);
-      const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
-      return { ana, orden };
-    };
-
-    const pagosDe = (orden: OrdenCreada) =>
-      prisma.pago.findMany({
-        where: { ordenId: orden.ordenId },
-        select: { proveedor: true, referenciaExterna: true, estado: true, montoCentavos: true },
-        orderBy: { creadoEn: 'asc' },
-      });
-
     it('200 {proveedor, redirectUrl}: pago EN_PROCESO en la API y PENDIENTE en el simulador', async () => {
       const { ana, orden } = await ordenReservada();
       const res = await pagar(ana, orden.ordenId).expect(200);
@@ -591,6 +595,193 @@ describe('Pagos: webhook del simulador', () => {
         await new Promise((cerrado) => proveedorLento.close(cerrado));
       }
       expect(await pagosDe(orden)).toEqual([]);
+    });
+  });
+
+  describe('Simulador: página, modos y despacho', () => {
+    const despachar = async (referencia: string) =>
+      // Solo lo de esta referencia: en la BD puede haber restos de otras corridas.
+      (await app.get(SimuladorPagosService).despacharPendientes()).filter((r) => r.referencia === referencia);
+
+    const pagoCreado = async () => {
+      const { ana, orden } = await ordenReservada();
+      const referencia = referenciaDe((await pagar(ana, orden.ordenId).expect(200)).body.redirectUrl);
+      return { orden, referencia };
+    };
+
+    const confirmar = (referencia: string, campos: Record<string, string>) =>
+      request(url).post(`/simulador/pagar/${referencia}`).type('form').send(campos);
+
+    const filaSimulador = (referencia: string) => prisma.simuladorPago.findUniqueOrThrow({ where: { referencia } });
+
+    const eventosDe = (referencia: string) =>
+      prisma.webhookEvento.findMany({
+        where: { eventoExternoId: { startsWith: referencia.replace('sim_pay_', 'sim_evt_') } },
+        select: { tipo: true },
+        orderBy: { id: 'asc' },
+      });
+
+    // Segundos que faltan para el próximo envío, con el reloj de Postgres.
+    const segundosHastaEnvio = async (referencia: string) => {
+      const [{ s }] = await prisma.$queryRaw<{ s: number }[]>`
+        SELECT extract(epoch FROM enviar_en - now())::float AS s FROM simulador_pagos WHERE referencia = ${referencia}`;
+      return s;
+    };
+
+    const conProveedorCaido = async <T>(accion: () => Promise<T>) => {
+      const puerto = await new Promise<number>((resolve) => {
+        const s = createServer().listen(0, '127.0.0.1', () => {
+          const { port } = s.address() as AddressInfo;
+          s.close(() => resolve(port));
+        });
+      });
+      process.env.API_PUBLIC_URL = `http://127.0.0.1:${puerto}`;
+      try {
+        return await accion();
+      } finally {
+        process.env.API_PUBLIC_URL = url;
+      }
+    };
+
+    it('sin confirmación no sale ningún webhook; al confirmar OK, el siguiente despacho lo entrega y la orden queda PAGADA', async () => {
+      const { orden, referencia } = await pagoCreado();
+
+      // enviar_en NULL: el despacho no la toca.
+      expect(await despachar(referencia)).toEqual([]);
+      expect(await filaSimulador(referencia)).toMatchObject({ estado: 'PENDIENTE', enviarEn: null, intentosEntrega: 0 });
+      expect(await eventosDe(referencia)).toEqual([]);
+      expect(await estadoDe(orden)).toMatchObject({ orden: 'PENDIENTE_PAGO', pagos: [{ estado: 'EN_PROCESO' }] });
+
+      await confirmar(referencia, { modo: 'OK' }).expect(200);
+      expect(await despachar(referencia)).toEqual([{ referencia, envios: 1, entregado: true }]);
+
+      expect(await eventosDe(referencia)).toEqual([{ tipo: 'EXITOSO' }]);
+      expect(await estadoDe(orden)).toMatchObject({ orden: 'PAGADA', pagos: [{ estado: 'CONFIRMADO' }], entradas: 2 });
+      expect(await filaSimulador(referencia)).toMatchObject({ estado: 'PAGADO', enviarEn: null });
+      // Entregado: no se vuelve a enviar.
+      expect(await despachar(referencia)).toEqual([]);
+    });
+
+    it('GET /simulador/pagar/:ref: página con el monto en Bs y los modos; referencia desconocida → 404', async () => {
+      const { referencia } = await pagoCreado();
+      const res = await request(url)
+        .get(`/simulador/pagar/${referencia}`)
+        .expect(200)
+        .expect('Content-Type', /text\/html/);
+
+      // 2 asientos × Bs 150,50, con el formato de Bolivia.
+      expect(res.text).toContain('301,00');
+      for (const modo of MODOS_SIMULADOR) expect(res.text).toContain(`value="${modo}"`);
+      await request(url).get(`/simulador/pagar/sim_pay_${'0'.repeat(32)}`).expect(404);
+    });
+
+    it('RECHAZO → pago FALLIDO; la orden sigue PENDIENTE_PAGO', async () => {
+      const { orden, referencia } = await pagoCreado();
+      await confirmar(referencia, { modo: 'RECHAZO' }).expect(200);
+
+      expect(await despachar(referencia)).toEqual([{ referencia, envios: 1, entregado: true }]);
+      expect(await eventosDe(referencia)).toEqual([{ tipo: 'FALLIDO' }]);
+      expect(await estadoDe(orden)).toMatchObject({ orden: 'PENDIENTE_PAGO', pagos: [{ estado: 'FALLIDO' }], entradas: 0 });
+      expect(await filaSimulador(referencia)).toMatchObject({ estado: 'RECHAZADO', enviarEn: null });
+    });
+
+    it('DUPLICAR veces=5 → 5 envíos en paralelo del MISMO evento, 1 registro y la orden PAGADA una vez (P-01 de punta a punta)', async () => {
+      const { orden, referencia } = await pagoCreado();
+      await confirmar(referencia, { modo: 'DUPLICAR', veces: '5' }).expect(200);
+
+      expect(await despachar(referencia)).toEqual([{ referencia, envios: 5, entregado: true }]);
+      expect(await eventosDe(referencia)).toEqual([{ tipo: 'EXITOSO' }]);
+      expect(await estadoDe(orden)).toMatchObject({ orden: 'PAGADA', entradas: 2, outbox: [{ tipo: 'ENTRADAS_EMITIDAS' }] });
+    });
+
+    it('DEMORA s=120 → nada sale antes de tiempo; al llegar la hora, se entrega', async () => {
+      const { orden, referencia } = await pagoCreado();
+      await confirmar(referencia, { modo: 'DEMORA', s: '120' }).expect(200);
+
+      expect(await despachar(referencia)).toEqual([]);
+      const faltan = await segundosHastaEnvio(referencia);
+      expect(faltan).toBeGreaterThan(115);
+      expect(faltan).toBeLessThanOrEqual(120);
+
+      // Se adelanta el reloj de esta fila en lugar de esperar 2 minutos.
+      await prisma.$executeRaw`UPDATE simulador_pagos SET enviar_en = now() WHERE referencia = ${referencia}`;
+      expect(await despachar(referencia)).toEqual([{ referencia, envios: 1, entregado: true }]);
+      expect(await estadoDe(orden)).toMatchObject({ orden: 'PAGADA' });
+    });
+
+    it('DESORDEN → EXITOSO y después FALLIDO del mismo pago: la orden queda PAGADA (P-05 de punta a punta)', async () => {
+      const { orden, referencia } = await pagoCreado();
+      await confirmar(referencia, { modo: 'DESORDEN' }).expect(200);
+
+      expect(await despachar(referencia)).toEqual([{ referencia, envios: 2, entregado: true }]);
+      expect(await eventosDe(referencia)).toEqual([{ tipo: 'EXITOSO' }, { tipo: 'FALLIDO' }]);
+      expect(await estadoDe(orden)).toMatchObject({ orden: 'PAGADA', pagos: [{ estado: 'CONFIRMADO' }], entradas: 2 });
+    });
+
+    it('confirmar dos veces → la segunda da 409 y no cambia el modo', async () => {
+      const { referencia } = await pagoCreado();
+      await confirmar(referencia, { modo: 'OK' }).expect(200);
+      await confirmar(referencia, { modo: 'RECHAZO' }).expect(409);
+      expect(await filaSimulador(referencia)).toMatchObject({ modo: 'OK', estado: 'PAGADO' });
+    });
+
+    it.each([
+      ['modo desconocido', { modo: 'MONTO_ERRONEO' }],
+      ['DUPLICAR con veces=1', { modo: 'DUPLICAR', veces: '1' }],
+      ['DUPLICAR con veces=11', { modo: 'DUPLICAR', veces: '11' }],
+      ['DUPLICAR sin veces', { modo: 'DUPLICAR' }],
+      ['DEMORA con s=0', { modo: 'DEMORA', s: '0' }],
+      ['DEMORA con s=601', { modo: 'DEMORA', s: '601' }],
+      ['DEMORA sin s', { modo: 'DEMORA' }],
+    ])('%s → 400 y el pago sigue PENDIENTE', async (_caso, campos) => {
+      const { referencia } = await pagoCreado();
+      await confirmar(referencia, campos).expect(400);
+      expect(await filaSimulador(referencia)).toMatchObject({ estado: 'PENDIENTE', enviarEn: null });
+    });
+
+    it('la API no responde → reintento a los 5 s; cuando vuelve, se entrega', async () => {
+      const { orden, referencia } = await pagoCreado();
+      await confirmar(referencia, { modo: 'OK' }).expect(200);
+
+      expect(await conProveedorCaido(() => despachar(referencia))).toEqual([{ referencia, envios: 1, entregado: false }]);
+      expect(await filaSimulador(referencia)).toMatchObject({ estado: 'PAGADO', intentosEntrega: 1 });
+      const faltan = await segundosHastaEnvio(referencia);
+      expect(faltan).toBeGreaterThan(4);
+      expect(faltan).toBeLessThanOrEqual(5);
+
+      await prisma.$executeRaw`UPDATE simulador_pagos SET enviar_en = now() WHERE referencia = ${referencia}`;
+      expect(await despachar(referencia)).toEqual([{ referencia, envios: 1, entregado: true }]);
+      expect(await estadoDe(orden)).toMatchObject({ orden: 'PAGADA' });
+      expect(await filaSimulador(referencia)).toMatchObject({ enviarEn: null });
+    });
+
+    it('backoff 5 s, 30 s, 2 min, 10 min; tras el 5.º intento fallido se rinde', async () => {
+      const { referencia } = await pagoCreado();
+      await confirmar(referencia, { modo: 'OK' }).expect(200);
+
+      for (const [intentos, segundos] of [[1, 5], [2, 30], [3, 120], [4, 600]] as const) {
+        // Se adelanta enviar_en por SQL: ningún test espera segundos reales.
+        await prisma.$executeRaw`UPDATE simulador_pagos SET enviar_en = now() WHERE referencia = ${referencia}`;
+        expect(await conProveedorCaido(() => despachar(referencia))).toEqual([{ referencia, envios: 1, entregado: false }]);
+        expect(await filaSimulador(referencia)).toMatchObject({ intentosEntrega: intentos });
+        const faltan = await segundosHastaEnvio(referencia);
+        expect(faltan).toBeGreaterThan(segundos - 1);
+        expect(faltan).toBeLessThanOrEqual(segundos);
+      }
+
+      await prisma.$executeRaw`UPDATE simulador_pagos SET enviar_en = now() WHERE referencia = ${referencia}`;
+      expect(await conProveedorCaido(() => despachar(referencia))).toEqual([{ referencia, envios: 1, entregado: false }]);
+      // Agotado: no hay próximo envío (lo recuperaría la reconciliación).
+      expect(await filaSimulador(referencia)).toMatchObject({ intentosEntrega: 5, enviarEn: null });
+      expect(await despachar(referencia)).toEqual([]);
+    });
+
+    it('dos despachos simultáneos → el webhook sale una sola vez (lease con FOR UPDATE SKIP LOCKED)', async () => {
+      const { referencia } = await pagoCreado();
+      await confirmar(referencia, { modo: 'OK' }).expect(200);
+
+      const [a, b] = await Promise.all([despachar(referencia), despachar(referencia)]);
+      expect([...a, ...b]).toEqual([{ referencia, envios: 1, entregado: true }]);
     });
   });
 });
