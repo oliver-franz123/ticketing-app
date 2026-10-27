@@ -4,9 +4,11 @@
 // resultado es idéntico al QR que firmó el Worker (apps/worker/src/qr/qr.ts).
 //   npm run qr:entrada -w @entradas/worker -- <entradaId> <eventoId> <emitidaEnUnix>
 // Lee QR_SIGNING_PRIVATE_KEY del entorno o del .env de la raíz. Nunca contra producción.
+import { Buffer } from 'node:buffer';
 import { createPrivateKey, sign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { argv, env, exit, stderr, stdout } from 'node:process';
+import { URL } from 'node:url';
 
 const [entradaId, eventoId, emitida] = argv.slice(2);
 if (!entradaId || !eventoId || !/^\d+$/.test(emitida ?? '')) {
