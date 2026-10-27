@@ -72,7 +72,7 @@ flowchart BT
 ### 2.6 Autorización y seguridad
 | ID | Escenario | Resultado esperado |
 |---|---|---|
-| A-01 | Un comprador llama a `POST /admin/eventos` | 403 |
+| A-01 | Un comprador (o un validador) llama a `POST /eventos` | 403 (es el caso E-01 de §2.8) |
 | A-02 | Un comprador cancela la orden de otro usuario | 404 (no se revela que existe) |
 | A-03 | Un validador valida una entrada de un evento no asignado | `OTRO_EVENTO` |
 | A-04 | JWT vencido o con firma alterada | 401 |
@@ -94,6 +94,23 @@ flowchart BT
 | p95 reserva (servidor) | ___ ms |
 | p95 reserva (cliente en Cochabamba, 4G) | ___ ms |
 | p95 propagación WS A→B | ___ ms |
+
+### 2.8 Catálogo y mapa de asientos (semana 2)
+
+En `apps/api/test/eventos.e2e-spec.ts` (Postgres real). Las fechas de los tests son relativas a hoy, nunca fijas.
+
+| ID | Escenario | Resultado esperado |
+|---|---|---|
+| E-01 | `POST /eventos` sin token / como COMPRADOR o VALIDADOR | 401 / 403 (A-01). No se crea nada |
+| E-02 | Un ORGANIZADOR crea un evento con una zona de 5 × 8 y `inicio` con offset `-04:00` | 201. Evento BORRADOR a su nombre, `inicio` guardado como el mismo instante en UTC, 40 asientos LIBRE (filas A..E, columnas 1..8, sin duplicados) |
+| E-03 | Un ORGANIZADOR manda el `organizadorId` de otro | 403 y no se crea nada |
+| E-04 | Un ADMIN crea a nombre de un ORGANIZADOR / de un COMPRADOR / de un id inexistente | 201 con ese dueño / 400 / 400 |
+| E-05 | Recinto inexistente | 400 y no se crea nada |
+| E-06 | Grilla de 100 × 150 (el límite) / de 100 × 151 | 201 con 15.000 asientos / 400 sin tocar la BD |
+| E-07 | La inserción de la grilla falla después de insertar el evento y la zona | 500 y no queda ni el evento ni la zona (una sola transacción) |
+| E-08 | Body con `estado`, `mapaVersion`, precio decimal o fecha sin zona horaria | 400 |
+| L-01..L-05 | `GET /eventos`: público, `Cache-Control: public, max-age=30`, filtro por ciudad, solo el estado pedido (PUBLICADO por defecto), BORRADOR → 400, orden por `inicio`, paginación (`porPagina` ≤ 50) y fechas en UTC | Ver el test |
+| M-01..M-03 | `GET /eventos/:id/asientos`: público, zonas con precio en centavos, orden A1, A2… Z2, AA1, un asiento `NO_DISPONIBLE` se ve así. BORRADOR o inexistente → el mismo 404. Id que no es UUID → 400 | Ver el test |
 
 ## 3. Guion de la demo en vivo (≈ 12 min)
 

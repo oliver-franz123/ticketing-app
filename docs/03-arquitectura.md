@@ -119,8 +119,8 @@ flowchart TB
 | Módulo | Tablas de las que es dueño | Expone | Depende de |
 |---|---|---|---|
 | Identidad | `usuarios` | `registrar`, `login`, guard JWT | — |
-| Catálogo | `departamentos`, `ciudades`, `recintos`, `eventos`, `zonas` | `listarPorCiudad`, `publicar` | Identidad |
-| Inventario | `asientos` | `reservar`, `liberar`, `marcarVendidos`, `snapshotMapa` | Catálogo |
+| Catálogo | `departamentos`, `ciudades`, `recintos`, `eventos`, `zonas` | `listarPorCiudad`, `publicar` | Identidad, Inventario (le pasa su transacción para generar la grilla y le pide el snapshot del mapa) |
+| Inventario | `asientos` | `generarGrilla`, `reservar`, `liberar`, `marcarVendidos`, `snapshotMapa` | — (no importa a Catálogo: la dependencia va en un solo sentido) |
 | Órdenes y Pagos | `ordenes`, `orden_items`, `pagos`, `webhook_eventos` | `crearOrden`, `iniciarPago`, `procesarWebhook` | Inventario, Entradas |
 | Entradas | `entradas`, `validaciones` | `emitir`, `validar` | — |
 | Outbox | `outbox` | `registrar(evento)` (dentro de la transacción del llamador) | — |

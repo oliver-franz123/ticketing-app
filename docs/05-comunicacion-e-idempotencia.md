@@ -29,9 +29,9 @@
 |---|---|---|
 | `POST /auth/registro` · `POST /auth/login` | público | 201 / 200 `{token}` · 400 (validación) · 409 en el registro · 401 en el login |
 | `GET /ciudades` | público | 200 |
-| `GET /eventos?ciudad=cochabamba&desde=...` | público | 200 (cache 30 s) |
+| `GET /eventos?ciudad=cochabamba&estado=PUBLICADO&pagina=1&porPagina=20` | público | 200 `{items, pagina, porPagina, total}` (cache 30 s). `estado` admite PUBLICADO (por defecto), FINALIZADO o CANCELADO; BORRADOR → 400 |
 | `GET /eventos/:id` | público | 200 |
-| `GET /eventos/:id/asientos` | público | 200 `{version, asientos:[...]}` (snapshot) |
+| `GET /eventos/:id/asientos` | público | 200 `{eventoId, version, zonas:[...], asientos:[...]}` (snapshot) · 404 si no existe **o es BORRADOR** (mismo mensaje) |
 | `GET /eventos/:id/asientos?desdeVersion=812` | público | 200 `{version, cambios:[...]}` (delta para polling) |
 | `POST /eventos/:id/reservas` + `Idempotency-Key` | comprador | 201 `{ordenId, expiresAt, totalCentavos}` · **409** `{noDisponibles}` · 429 |
 | `DELETE /ordenes/:id` | comprador (dueño) | 204 |
@@ -39,7 +39,7 @@
 | `POST /webhooks/pagos/:proveedor` | proveedor (firma) | **200** siempre que la firma sea válida (incluso si es duplicado) · 400 si la firma es inválida |
 | `GET /mis-entradas` · `GET /entradas/:id/pdf` | comprador | 200 |
 | `POST /validaciones` `{qr}` | validador | 200 `{resultado: VALIDA \| YA_USADA \| INVALIDA \| OTRO_EVENTO, usadaEn?}` |
-| `POST /admin/eventos` ... | organizador | 201 |
+| `POST /eventos` | organizador o admin | 201: evento BORRADOR + zona + grilla de asientos LIBRE, en una transacción · 400 (validación, recinto inexistente, grilla > 15.000 asientos) · 403 (un organizador a nombre de otro) |
 
 **Auth y enumeración de usuarios (T9):**
 - **Login:** responde lo mismo, `401 {"message": "Email o contraseña incorrectos"}`, cuando el email no existe y cuando la contraseña está mal. Si el email no existe, se verifica igual contra un hash señuelo de argon2id, para que el tiempo de respuesta no delate qué emails están registrados.
