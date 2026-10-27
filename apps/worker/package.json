@@ -9,6 +9,7 @@
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.config.e2e.mts",
     "claves:qr": "node scripts/generar-claves-qr.mjs"
   },
   "dependencies": {
