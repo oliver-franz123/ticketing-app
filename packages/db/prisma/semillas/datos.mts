@@ -35,3 +35,20 @@ export const USUARIOS = [
   { email: `validador${DOMINIO_USUARIOS}`, nombre: 'Validador Semilla', rol: Rol.VALIDADOR },
   { email: `comprador${DOMINIO_USUARIOS}`, nombre: 'Comprador Semilla', rol: Rol.COMPRADOR },
 ] as const;
+
+// Recintos de la demo (T7 ampliada). recintos no tiene clave única natural:
+// el id fijo hace que el upsert sea idempotente. Nombres genéricos a propósito.
+export const RECINTOS = [
+  {
+    id: '00000000-0000-4000-8000-00000000c001',
+    ciudad: 'cochabamba',
+    nombre: 'Coliseo Central (demo)',
+    direccion: 'Av. Heroínas, Cochabamba',
+  },
+  {
+    id: '00000000-0000-4000-8000-00000000c002',
+    ciudad: 'cochabamba',
+    nombre: 'Teatro Municipal (demo)',
+    direccion: 'Plaza 14 de Septiembre, Cochabamba',
+  },
+] as const;
