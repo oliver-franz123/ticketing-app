@@ -308,17 +308,19 @@ model Validacion {
 // ─── Outbox y emails (ADR-0005) ─────────────────────────────────────────────
 
 model Outbox {
-  id          BigInt    @id @default(autoincrement())
+  id             BigInt    @id @default(autoincrement())
   // ENTRADAS_EMITIDAS REEMBOLSO_REQUERIDO
-  tipo        String
+  tipo           String
   // Solo IDs, sin datos personales.
-  payload     Json
-  creadoEn    DateTime  @default(now()) @map("creado_en") @db.Timestamptz(6)
-  // NULL = pendiente de publicar en BullMQ.
-  publicadoEn DateTime? @map("publicado_en") @db.Timestamptz(6)
-  intentos    Int       @default(0)
+  payload        Json
+  creadoEn       DateTime  @default(now()) @map("creado_en") @db.Timestamptz(6)
+  // NULL = pendiente. Desde ADR-0017 significa "procesado con éxito por el Worker".
+  publicadoEn    DateTime? @map("publicado_en") @db.Timestamptz(6)
+  // Lease del Worker que la reclamó (ADR-0017). Vencido o NULL = se puede reclamar.
+  reclamadoHasta DateTime? @map("reclamado_hasta") @db.Timestamptz(6)
+  intentos       Int       @default(0)
 
-  // Relay: solo las filas no publicadas.
+  // Worker (ADR-0017): solo las filas pendientes.
   @@index([id], map: "ix_outbox_pendientes", where: raw("publicado_en IS NULL"))
   @@map("outbox")
 }
