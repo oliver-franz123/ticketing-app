@@ -90,7 +90,7 @@ gantt
 ### Semana 4 — Asincronía y tolerancia a fallos
 | Entregable | Resp. | Criterio |
 |---|---|---|
-| Outbox + relay (SKIP LOCKED, `jobId`) + Worker: firma QR Ed25519, PDF (es-BO, hora La Paz) y email (Mailpit/Resend) con reintentos | C | W-01..W-06 en verde |
+| Outbox consumido por el Worker (SKIP LOCKED + lease, ADR-0017; BullMQ diferido) + firma QR Ed25519, PDF (es-BO, hora La Paz) y email (Mailpit/Resend) | C | W-01..W-05 y W-07 en verde |
 | **Opcional**, solo si la prueba T11 de la semana 1 confirmó que se puede abrir la cuenta de test desde Bolivia: `StripeTestAdapter` (Checkout en modo test) + `stripe listen` en local. La demo usa el **simulador como flujo principal** | A | Si se hace: pagar con 4242... emite la entrada. Si no: no afecta a la demo |
 | Reconexión con backoff + jitter, fallback a polling, resync por versión, contador de reserva | B | R-02..R-04 |
 

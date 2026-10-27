@@ -45,13 +45,17 @@ flowchart BT
 ### 2.3 Outbox, cola y Worker
 | ID | Escenario | Resultado esperado |
 |---|---|---|
-| W-01 | **Worker detenido**, 3 compras completas | Las 3 órdenes quedan PAGADAS y las entradas visibles en "Mis entradas". 3 jobs en espera en la cola |
-| W-02 | Se reinicia el Worker | Los 3 jobs se procesan. 3 emails en Mailpit en < 2 min |
-| W-03 | **Redis detenido** durante una compra | La compra se completa. La fila de outbox queda pendiente. Al volver Redis, se publica y procesa |
-| W-04 | El relay publica dos veces la misma fila (forzado) | 1 solo job (mismo `jobId`) |
-| W-05 | Resend devuelve 503 dos veces y luego 200 | 1 email. `intentos = 3` |
-| W-06 | Resend devuelve 422 (email inválido) | Sin reintentos. `FALLIDO` |
-| W-07 | El Worker muere (`kill -9`) a mitad de un PDF | BullMQ detecta el job *stalled* y lo reintenta. 1 email final (o duplicado aceptado y documentado) |
+> Desde ADR-0017 el Worker lee el outbox directamente (sin BullMQ). Los escenarios quedan así:
+
+| ID | Escenario | Resultado esperado |
+|---|---|---|
+| W-01 | **Worker detenido**, 3 compras completas | Las 3 órdenes quedan PAGADAS y las entradas visibles en "Mis entradas" (todavía sin QR, pendiente 13). 3 filas `ENTRADAS_EMITIDAS` con `publicado_en IS NULL` |
+| W-02 | Se reinicia el Worker | Las 3 filas se procesan (`publicado_en` con valor). 3 emails con el PDF adjunto en Mailpit en < 2 min |
+| W-03 | **Redis detenido** durante una compra | La compra se completa y el Worker emite igual: la emisión ya no pasa por Redis |
+| W-04 | Dos Workers a la vez sobre el mismo outbox | Cada fila la procesa uno solo (`SKIP LOCKED` + lease). 1 email por orden |
+| W-05 | El SMTP falla y luego vuelve | La fila sigue pendiente, `envios_email` PENDIENTE. Al vencer el lease se reintenta: 1 email |
+| W-06 | Resend devuelve 422 (email inválido) | Diferido con BullMQ (ADR-0017): hoy se reintenta cada 120 s, visible en `intentos` |
+| W-07 | El Worker muere (`kill -9`) a mitad de un PDF | Al vencer el lease otro Worker (o el mismo al volver) retoma la fila. 1 email final (o duplicado aceptado y documentado) |
 
 ### 2.4 Tiempo real y reconexión
 | ID | Escenario | Resultado esperado |
@@ -143,7 +147,7 @@ En `apps/api/test/ordenes.e2e-spec.ts` (Postgres real). Además de C-01..C-04 y 
 | 1–3 | **La carrera** | `node scripts/carrera.js --asiento F-12 --n 50` → `201: 1 · 409: 49` (50 usuarios distintos desde una IP: requiere `RATE_LIMIT_RESERVAS_IP` ≥ 100). Panel: `reservas_total{ok}=1, {conflicto}=49`. Logs de **ambas** instancias | UPDATE condicional, Postgres decide |
 | 3–4 | **Mapa en vivo** | Navegador B ve F-12 en gris al instante, aunque está en otra instancia | Pub/sub multi-instancia |
 | 4–6 | **Pago + webhook duplicado** | Pagar con el simulador en modo `duplicar=5`. Panel: `webhooks{duplicado}=4`. "Mis entradas": 1 entrada | Idempotencia |
-| 6–8 | **Caída del Worker** | `fly machine stop <worker>`. Comprar 3 veces: todo OK. Bull Board: 3 jobs en espera. `fly machine start` → 3 emails llegan | Tolerancia a fallos, outbox |
+| 6–8 | **Caída del Worker** | `fly machine stop <worker>`. Comprar 3 veces: todo OK. `SELECT count(*) FROM outbox WHERE publicado_en IS NULL` → 3 (ADR-0017). `fly machine start` → 3 emails llegan | Tolerancia a fallos, outbox |
 | 8–9 | **Expiración** | Reserva con TTL de demo (60 s), sin pagar: se libera sola | Lease + expiración perezosa |
 | 9–10 | **Red móvil** | DevTools Offline → Online: reconecta y resincroniza | Reconexión + versionado |
 | 10–11 | **Puerta** | Escanear el QR desde el celular: VÁLIDA, y de nuevo: YA USADA 21:04 | CAS en la validación |

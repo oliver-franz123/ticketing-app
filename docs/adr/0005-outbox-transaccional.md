@@ -1,6 +1,6 @@
 # ADR-0005 — Outbox transaccional
 
-- **Estado:** Aceptado · **Fecha:** 2026-10-16
+- **Estado:** Reemplazado parcialmente por [ADR-0017](0017-worker-consume-outbox-sin-bullmq.md) (el outbox se mantiene; el Worker lo lee directamente y BullMQ queda diferido) · **Fecha:** 2026-10-16
 
 ## Contexto
 Al confirmar el pago hay que guardar en Postgres **y** encolar en Redis. No existe una transacción común (doble escritura).
