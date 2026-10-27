@@ -8,6 +8,7 @@
     "dev": "nest start --watch --preserveWatchOutput",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
     "claves:qr": "node scripts/generar-claves-qr.mjs"
   },
   "dependencies": {
