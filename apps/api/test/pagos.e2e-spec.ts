@@ -1,7 +1,9 @@
 import { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import type { Rol } from '@entradas/db';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { createServer as crearServidorHttp } from 'node:http';
+import { type AddressInfo, createServer } from 'node:net';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { configurarApp } from '../src/configurar-app';
@@ -534,6 +536,61 @@ describe('Pagos: webhook del simulador', () => {
         [primera, 'FALLIDO'],
         [segunda, 'EN_PROCESO'],
       ]);
+    });
+
+    it('502 si el proveedor no responde: mensaje genérico y nada en pagos ni en el simulador', async () => {
+      const { ana, orden } = await ordenReservada();
+      // Un puerto que estuvo abierto y se cerró: la conexión se rechaza al instante.
+      const puertoCerrado = await new Promise<number>((resolve) => {
+        const servidor = createServer().listen(0, '127.0.0.1', () => {
+          const { port } = servidor.address() as AddressInfo;
+          servidor.close(() => resolve(port));
+        });
+      });
+
+      process.env.API_PUBLIC_URL = `http://127.0.0.1:${puertoCerrado}`;
+      try {
+        const res = await pagar(ana, orden.ordenId).expect(502);
+        expect(res.body.message).toBe('El proveedor de pagos no respondió');
+      } finally {
+        // Los demás tests necesitan la URL real.
+        process.env.API_PUBLIC_URL = url;
+      }
+      expect(await pagosDe(orden)).toEqual([]);
+      expect(await prisma.simuladorPago.count({ where: { ordenId: orden.ordenId } })).toBe(0);
+    });
+
+    it('la orden vence mientras se espera al proveedor → 409 ORDEN_NO_PAGABLE y 0 filas en pagos', async () => {
+      const { ana, orden } = await ordenReservada();
+
+      // Proveedor falso: al recibir el intento, vence la orden por SQL y recién
+      // entonces responde 201 con una referencia válida. Así se abre a propósito
+      // la ventana entre el paso 1 de iniciarPago (la orden todavía era pagable)
+      // y el INSERT: solo el WHERE del INSERT … SELECT puede detectarlo.
+      const proveedorLento = crearServidorHttp((req, res) => {
+        req.resume();
+        req.on('end', () => {
+          prisma.$executeRaw`UPDATE ordenes SET expires_at = now() - interval '1 second' WHERE id = ${orden.ordenId}::uuid`
+            .then(() => {
+              res.writeHead(201, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ referencia: `sim_pay_${randomBytes(16).toString('hex')}` }));
+            })
+            // Si el UPDATE fallara, la API respondería 502 y el test fallaría a la vista.
+            .catch(() => res.writeHead(500).end());
+        });
+      });
+      await new Promise<void>((listo) => proveedorLento.listen(0, '127.0.0.1', listo));
+      const { port } = proveedorLento.address() as AddressInfo;
+
+      process.env.API_PUBLIC_URL = `http://127.0.0.1:${port}`;
+      try {
+        const res = await pagar(ana, orden.ordenId).expect(409);
+        expect(res.body.codigo).toBe('ORDEN_NO_PAGABLE');
+      } finally {
+        process.env.API_PUBLIC_URL = url;
+        await new Promise((cerrado) => proveedorLento.close(cerrado));
+      }
+      expect(await pagosDe(orden)).toEqual([]);
     });
   });
 });

@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@entradas/db';
 import type { CabecerasHttp, EventoPagoNormalizado } from '@entradas/shared';
 import { createHash } from 'node:crypto';
+import type { UsuarioAutenticado } from '../../auth/tipos';
 import { EntradasService } from '../../entradas/entradas.service';
 import { InventarioService } from '../../inventario/inventario.service';
 import { registrarEnOutbox } from '../../outbox/registrar';
@@ -29,6 +30,22 @@ interface OrdenFila {
   moneda: string;
 }
 
+interface OrdenAPagar {
+  estado: string;
+  total_centavos: bigint;
+  moneda: string;
+  // expires_at > now() calculado por Postgres: nunca con la hora de la API.
+  vigente: boolean;
+}
+
+const ordenNoPagable = () =>
+  new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    codigo: 'ORDEN_NO_PAGABLE',
+    message: 'La orden ya no se puede pagar',
+  });
+
 // Estados desde los que un pago exitoso puede confirmar la orden (doc 04 §1).
 const ESTADOS_COBRABLES = ['PENDIENTE_PAGO', 'EXPIRADA'];
 
@@ -45,6 +62,83 @@ export class PagosService {
     private readonly entradas: EntradasService,
     private readonly proveedores: ProveedoresPago,
   ) {}
+
+  // POST /ordenes/:id/pago (doc 05 §4). Sin transacción alrededor del HTTP: el
+  // simulador vive en esta misma API y necesita su propia conexión del pool;
+  // retener una mientras se lo espera agota el pool con pocos pagos a la vez.
+  // La regla "un solo cobro vivo por orden" la garantiza la base, con el índice
+  // único parcial ux_pago_en_proceso_por_orden.
+  async iniciarPago(usuario: UsuarioAutenticado, ordenId: string) {
+    const id = ordenId.toLowerCase();
+
+    // 1. Ajena o inexistente: el mismo 404, no se revela que existe.
+    const [orden] = await this.prisma.$queryRaw<OrdenAPagar[]>`
+      SELECT estado, total_centavos, moneda, expires_at > now() AS vigente
+      FROM ordenes
+      WHERE id = ${id}::uuid AND usuario_id = ${usuario.id}::uuid`;
+    if (!orden) throw new NotFoundException('Orden no encontrada');
+    // Antes que buscar un pago vivo: una orden vencida no se paga aunque haya
+    // un intento abierto (si ese intento cobra igual, lo resuelve la re-captura).
+    if (orden.estado !== 'PENDIENTE_PAGO' || !orden.vigente) throw ordenNoPagable();
+
+    // 2. Doble clic o volver a la página de pago: el intento que ya existe.
+    const vivo = await this.pagoEnProceso(id);
+    if (vivo) return this.respuestaPago(vivo);
+
+    // 3. El proveedor crea el intento. Sin conexión retenida.
+    const proveedor = this.proveedores.porDefecto;
+    const intento = await proveedor.crearIntento({
+      ordenId: id,
+      montoCentavos: orden.total_centavos,
+      moneda: orden.moneda,
+    });
+
+    // 4. Se inserta solo si la orden SIGUE siendo pagable en este instante: el
+    // WHERE se evalúa en la misma sentencia que el INSERT, así que no hay
+    // hueco entre comprobar y escribir. El monto sale de la orden, no del
+    // intento. ON CONFLICT DO NOTHING (sin columnas) cubre el índice parcial:
+    // si otro clic insertó antes, esta sentencia espera a que termine y no
+    // inserta nada.
+    const insertado = await this.prisma.$queryRaw<{ proveedor: string; referencia_externa: string }[]>`
+      INSERT INTO pagos (orden_id, proveedor, referencia_externa, estado, monto_centavos, moneda)
+      SELECT o.id, ${proveedor.nombre}, ${intento.referenciaExterna}, 'EN_PROCESO', o.total_centavos, o.moneda
+      FROM ordenes o
+      WHERE o.id = ${id}::uuid
+        AND o.usuario_id = ${usuario.id}::uuid
+        AND o.estado = 'PENDIENTE_PAGO'
+        AND o.expires_at > now()
+      ON CONFLICT DO NOTHING
+      RETURNING proveedor, referencia_externa`;
+    if (insertado.length > 0) {
+      return this.respuestaPago({ proveedor: insertado[0].proveedor, referenciaExterna: insertado[0].referencia_externa });
+    }
+
+    // 5. 0 filas: perdió el doble clic (devuelve la URL del ganador) o la orden
+    // dejó de ser pagable mientras se esperaba al proveedor. El intento
+    // huérfano del proveedor queda sin usar: el webhook solo actúa sobre
+    // referencias que están en pagos.
+    const ganador = await this.pagoEnProceso(id);
+    if (ganador) return this.respuestaPago(ganador);
+    throw ordenNoPagable();
+  }
+
+  // El índice es parcial: findFirst con el estado, nunca findUnique (ADR-0016).
+  private pagoEnProceso(ordenId: string) {
+    return this.prisma.pago.findFirst({
+      where: { ordenId, estado: 'EN_PROCESO' },
+      select: { proveedor: true, referenciaExterna: true },
+    });
+  }
+
+  // Siempre desde la referencia guardada: el pago nuevo, el que ya existía y el
+  // perdedor del doble clic devuelven exactamente lo mismo. Con el adaptador
+  // del pago, no con el default: el default pudo cambiar después de crearlo.
+  private respuestaPago(pago: { proveedor: string; referenciaExterna: string }) {
+    return {
+      proveedor: pago.proveedor,
+      redirectUrl: this.proveedores.obtener(pago.proveedor).redirectUrlDe(pago.referenciaExterna),
+    };
+  }
 
   // Firma primero y fuera de la transacción: un webhook falso no abre una
   // conexión ni escribe nada (400). Después, todo en UNA transacción: si algo

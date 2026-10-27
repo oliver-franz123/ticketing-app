@@ -16,6 +16,9 @@ export interface IntentoPago {
   // sim_pay_..., pi_...: va a pagos.referencia_externa.
   referenciaExterna: string;
   // Adónde mandar al comprador (página del simulador, Checkout, imagen del QR).
+  // PagosService responde con redirectUrlDe(referencia) para que el pago nuevo
+  // y el ya existente den la misma URL; este campo queda para adaptadores cuya
+  // URL no se pueda reconstruir.
   redirectUrl: string;
 }
 
@@ -45,6 +48,10 @@ export interface ProveedorPago {
   // simulador y Stripe 10 min, QR bancario 1 min.
   readonly umbralReconciliacionMs: number;
   crearIntento(orden: OrdenParaPago): Promise<IntentoPago>;
+  // Adónde mandar al comprador para un intento que YA existe (doble clic,
+  // volver a la página de pago). Se arma desde la referencia guardada en
+  // pagos, así todos los caminos devuelven la misma URL.
+  redirectUrlDe(referenciaExterna: string): string;
   // rawBody: los bytes EXACTOS recibidos (Buffer en Node). Lanza si la firma no
   // es válida; el controlador lo traduce a 400 sin escribir nada.
   verificarYNormalizar(cabeceras: CabecerasHttp, rawBody: Uint8Array): EventoPagoNormalizado;
