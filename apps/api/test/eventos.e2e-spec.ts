@@ -293,6 +293,25 @@ describe('Eventos y mapa de asientos', () => {
     });
   });
 
+  describe('GET /recintos', () => {
+    it('público, solo los recintos de la ciudad pedida', async () => {
+      const res = await request(app.getHttpServer()).get('/recintos').query({ ciudad: fx.ciudadA.slug }).expect(200);
+      expect(res.body.items).toEqual([
+        {
+          id: fx.recintoA.id,
+          nombre: 'Coliseo A',
+          direccion: 'Av. de prueba',
+          ciudad: { slug: fx.ciudadA.slug, nombre: 'Quillacollo' },
+        },
+      ]);
+    });
+
+    it('una ciudad inexistente da una lista vacía', async () => {
+      const res = await request(app.getHttpServer()).get('/recintos').query({ ciudad: 'no-existe' }).expect(200);
+      expect(res.body.items).toEqual([]);
+    });
+  });
+
   describe('GET /eventos/:id/asientos', () => {
     // En la ciudad B para no alterar los conteos del listado de A.
     // 27 filas: prueba que AA va después de Z (orden por texto pondría AA antes de B).
