@@ -177,7 +177,7 @@ sequenceDiagram
 | Proveedor → webhook | El proveedor reintenta, o el simulador envía a propósito 2–5 veces | `webhook_eventos UNIQUE(proveedor, evento_externo_id)` dentro de la **misma transacción** que emite las entradas |
 | Mismo pago con eventos distintos | Dos eventos diferentes (`checkout.session.completed` y `payment_intent.succeeded`) por el mismo cobro | `pagos UNIQUE(proveedor, referencia_externa)` + la orden solo pasa de PENDIENTE a PAGADA una vez (`UPDATE ... WHERE estado IN ('PENDIENTE_PAGO','EXPIRADA')`) |
 | Emisión de entradas | Bug o carrera | Índice único parcial por asiento (doc 04) |
-| Outbox → cola | El relay publica, cae antes de marcar `publicado_en` y vuelve a publicar | `jobId = 'outbox-<id>'`: BullMQ **ignora** un job con un `jobId` que ya existe |
+| Outbox → Worker (ADR-0017) | Dos Workers toman la misma fila, o uno cae antes de marcar `publicado_en` | `FOR UPDATE SKIP LOCKED` + lease `reclamado_hasta`: cada fila la tiene un solo Worker a la vez. Si cae, la fila se reintenta al vencer el lease y `envios_email` evita el doble email. (Con BullMQ: `jobId = 'outbox-<id>'`) |
 | Worker → email | El job envía el email y el Worker cae antes de marcarlo como completado, así que BullMQ lo reintenta | Tabla `envios_email UNIQUE(orden_id, tipo)` con estado + `Idempotency-Key` hacia Resend (si el proveedor lo soporta: verificar en su documentación actual). **Sin garantía absoluta:** un email duplicado es un riesgo aceptado y documentado (no hace daño, la entrada es la misma) |
 | Validador → `POST /validaciones` | Doble escaneo | `UPDATE ... WHERE estado='EMITIDA'` (doc 04) |
 
@@ -186,6 +186,8 @@ sequenceDiagram
 Las colas y los webhooks garantizan **al menos una** entrega. "Exactamente una vez" en la red no existe en general. Lo que sí podemos lograr es que **el efecto** ocurra una vez: el mensaje llega 1..N veces, y el consumidor idempotente lo aplica una.
 
 ## 6. Outbox transaccional
+
+> **Actualización (ADR-0017):** por ahora no hay relay en la API ni BullMQ. El **Worker** reclama las filas del outbox con `FOR UPDATE SKIP LOCKED` y un lease (`reclamado_hasta = now() + 120 s`), hace el trabajo y marca `publicado_en = now()` solo si terminó con éxito (la columna pasa a significar "procesado"). Si el Worker cae a medias, al vencer el lease otro la vuelve a tomar. La transacción de la API **no cambia**. El diagrama de abajo describe el diseño con BullMQ, que se reincorpora si se cumple alguno de los disparadores del ADR. Lo mismo vale para el diagrama de §4 (pasos del relay y de Redis) y para la tabla de §7.
 
 **Problema (doble escritura):** al confirmar el pago hay que (a) guardar en Postgres y (b) encolar en Redis. No existe una transacción que abarque ambos.
 - Si encolamos antes del COMMIT y el COMMIT falla, se envía un email de una entrada que no existe.

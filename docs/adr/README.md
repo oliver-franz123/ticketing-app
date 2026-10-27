@@ -11,7 +11,7 @@ Cada ADR documenta **una** decisión: el contexto, las opciones, la decisión to
 | [0002](0002-postgres-fuente-de-verdad-update-condicional.md) | Postgres decide quién gana el asiento (UPDATE condicional) | Aceptado |
 | [0003](0003-expiracion-reserva.md) | Reserva de 5 min con `expires_at` + expiración perezosa + job | Aceptado |
 | [0004](0004-idempotencia-webhook.md) | Webhook idempotente con restricción única | Aceptado |
-| [0005](0005-outbox-transaccional.md) | Outbox transaccional para encolar trabajos | Aceptado |
+| [0005](0005-outbox-transaccional.md) | Outbox transaccional para encolar trabajos | Reemplazado parcialmente por ADR-0017 |
 | [0006](0006-comunicacion-hibrida-sin-graphql.md) | REST + WebSocket + cola. GraphQL descartado | Aceptado |
 | [0007](0007-socketio-reconexion-y-polling.md) | Socket.IO, solo websocket, con fallback a polling REST | Aceptado |
 | [0008](0008-pagos-adapter-strategy.md) | Pagos detrás de un puerto con 3 adaptadores | Reemplazado parcialmente por ADR-0015 |
@@ -23,5 +23,6 @@ Cada ADR documenta **una** decisión: el contexto, las opciones, la decisión to
 | [0014](0014-modelo-geografico.md) | Departamento → ciudad → recinto para la expansión nacional | Aceptado |
 | [0015](0015-simulador-de-pagos-principal.md) | Simulador de pagos propio (módulo del backend) como proveedor principal; Stripe test opcional | Aceptado |
 | [0016](0016-indices-parciales-prisma-preview.md) | Índices parciales con la preview `partialIndexes` de Prisma | Aceptado |
+| [0017](0017-worker-consume-outbox-sin-bullmq.md) | El Worker consume el outbox con SKIP LOCKED + lease; BullMQ diferido | Aceptado |
 
 Plantilla: [`plantilla.md`](plantilla.md)

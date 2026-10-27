@@ -40,11 +40,11 @@ La documentación completa vive en `docs/`. Las decisiones están en `docs/adr/`
 2. **PostgreSQL es la fuente de verdad** de la concurrencia: `UPDATE ... WHERE estado='LIBRE'` atómico, restricciones únicas y `expires_at`. Redis **no** decide quién gana un asiento. Sin bloqueo pesimista de larga duración ni locks distribuidos.
 3. **Expiración:** `expires_at` + expiración perezosa en la propia consulta + job de limpieza que libera y notifica.
 4. **Webhook idempotente:** tabla de eventos procesados con `UNIQUE(proveedor, evento_externo_id)`.
-5. **Outbox transaccional** para encolar PDF/QR/email sin el problema de la doble escritura.
-6. **Comunicación híbrida:** REST + WebSocket (Socket.IO, solo estado de asientos) + cola BullMQ. GraphQL descartado.
+5. **Outbox transaccional** para encolar PDF/QR/email sin el problema de la doble escritura. El **Worker lee el outbox directamente** (`FOR UPDATE SKIP LOCKED` + lease `reclamado_hasta`); BullMQ queda **diferido** (ADR-0017).
+6. **Comunicación híbrida:** REST + WebSocket (Socket.IO, solo estado de asientos) + outbox en Postgres como cola (BullMQ diferido, ADR-0017). GraphQL descartado.
 7. **Auth propia con JWT** en NestJS (email + contraseña, rol en el token).
 8. **QR firmado con Ed25519.** El payload solo lleva IDs opacos.
-9. **Stack:** Next.js + React + TS (Vercel) · NestJS en **Fly.io región `gru` (São Paulo)** · Postgres en **Supabase `sa-east-1`**, usado solo como Postgres administrado · Redis + BullMQ (Redis en Fly `gru`) · **Resend** con dominio propio · Docker en local · GitHub Actions para CI · Prisma como ORM (SQL explícito en las consultas críticas).
+9. **Stack:** Next.js + React + TS (Vercel) · NestJS en **Fly.io región `gru` (São Paulo)** · Postgres en **Supabase `sa-east-1`**, usado solo como Postgres administrado · Redis en Fly `gru` (Socket.IO y rate limit; BullMQ diferido, ADR-0017) · **Resend** con dominio propio · Docker en local · GitHub Actions para CI · Prisma como ORM (SQL explícito en las consultas críticas).
 10. **Presupuesto:** hasta ~US$5–10 al mes durante la demo.
 
 ## Metodología

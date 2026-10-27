@@ -172,3 +172,5 @@ flowchart LR
 - **API:** atiende HTTP y WebSocket. Corre el **relay del outbox** cada ~500 ms. Varias instancias pueden correrlo a la vez gracias a `FOR UPDATE SKIP LOCKED`.
 - **Worker:** procesa `emitir-pdf` y `enviar-email`, y cada 15 s el job repetible `liberar-vencidas`.
 - **Por qué el relay está en la API y no en el Worker:** así, con el Worker caído, los jobs **se acumulan visiblemente en Redis** (se ve en la demo con Bull Board). Si además cae Redis, se acumulan en la tabla `outbox`. En ningún caso se pierden.
+
+> **Actualización (ADR-0017):** en el slice de la semana 4 no hay relay ni BullMQ. El **Worker lee el outbox directamente** con `FOR UPDATE SKIP LOCKED` y un lease (`reclamado_hasta`, 120 s). Con el Worker caído, lo pendiente se acumula en la tabla `outbox` (`publicado_en IS NULL`). Los diagramas de esta sección muestran el diseño con BullMQ, que se reincorpora si se cumple alguno de los disparadores del ADR.
