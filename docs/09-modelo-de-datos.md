@@ -169,6 +169,7 @@ erDiagram
         bigint monto_centavos
         char3 moneda
         text modo "OK RECHAZO DUPLICAR DEMORA DESORDEN MONTO_ERRONEO"
+        int veces "copias en DUPLICAR (1..10)"
         text estado "PENDIENTE PAGADO RECHAZADO"
         timestamptz enviar_en "próximo envío del webhook"
         int intentos_entrega

@@ -348,6 +348,8 @@ model SimuladorPago {
   moneda          String    @default("BOB") @db.Char(3)
   // OK RECHAZO DUPLICAR DEMORA DESORDEN MONTO_ERRONEO
   modo            String
+  // DUPLICAR: copias del mismo webhook que se envían en paralelo. 1 en los demás modos.
+  veces           Int       @default(1)
   // PENDIENTE PAGADO RECHAZADO
   estado          String    @default("PENDIENTE")
   // Próximo envío del webhook. NULL = nada pendiente.
