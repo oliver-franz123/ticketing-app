@@ -166,7 +166,7 @@ Se recorta **de abajo hacia arriba**. Lo de arriba **no se negocia**.
 | 11 | Panel organizador completo | Eventos cargados por script de semilla |
 | 12 | Sala de espera virtual | Solo diseño (ya está en el doc 06) |
 
-## 5. Pendientes (huecos menores 10–16)
+## 5. Pendientes (huecos menores 10–17)
 
 - **10.** `01-vision-y-alcance.md` §7 cita `00-resumen-docente.md`, pero el archivo se llama `00-resumen.md`.
 - **11.** En la raíz hay un `arquitectura.md` vacío y un `README.md` de dos líneas, mientras RNF-13 promete "levantar todo en 5 min siguiendo el README".
@@ -175,3 +175,4 @@ Se recorta **de abajo hacia arriba**. Lo de arriba **no se negocia**.
 - **14.** El plan asigna `StripeTestAdapter` (semana 4) al Integrante A, mientras que la tabla de responsabilidades pone a C como dueño de pagos. Si es una rotación intencional, falta explicarlo.
 - **15.** Simulador de pagos, primer test en rojo del commit 7 (página, modos y despacho): crear un pago con `POST /ordenes/:id/pago`, llamar a `despacharPendientes()` y comprobar que **no** sale ningún webhook (la fila nace con `enviar_en = NULL`); después confirmar en `POST /simulador/pagar/:ref`, despachar de nuevo y comprobar que el webhook llega. No va en el commit 6 porque `despacharPendientes()` todavía no existe: importarlo daría un error de compilación, no un rojo.
 - **16.** Cobro doble sin reembolso registrado. Secuencia: el pago A de una orden se marca FALLIDO; el comprador reintenta y nace el pago B (EN_PROCESO); llega tarde un `pago.exitoso` de A (el proveedor sí cobró) y la orden queda PAGADA; después también cobra B. El webhook de B ve la orden ya resuelta (`ORDEN_YA_RESUELTA`): marca B CONFIRMADO pero **no** deja constancia de que hay que devolver ese dinero. Lo cubrirá la reconciliación: un pago CONFIRMADO de una orden pagada por otro pago → reembolso requerido (tabla o estado a definir).
+- **17.** Dos mutaciones del simulador de pagos quedaron sin correr en el commit del verde (`feat(simulador): página, modos y despacho con lease y backoff`): (a) que `despacharPendientes()` tome también filas con `enviar_en IS NULL` (sin confirmar o ya entregadas): debería fallar el test «sin confirmación no sale ningún webhook…»; (b) que `firmar()` del simulador calcule el HMAC sin el `t` (`HMAC(secreto, cuerpo)`): la API respondería 400 a todos sus webhooks y deberían fallar los tests de punta a punta del simulador. Si alguna sobrevive, falta un test que la cubra.
