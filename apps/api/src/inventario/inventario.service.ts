@@ -81,6 +81,57 @@ export class InventarioService {
     return tomados.map((a) => a.id);
   }
 
+  // Re-captura al confirmar el pago (doc 04 §4.3): vuelve a tomar como VENDIDO
+  // los asientos de la orden, en UNA sentencia. Devuelve los que consiguió; si
+  // son menos que los de orden_items, el llamador hace ROLLBACK TO SAVEPOINT
+  // para que ninguno quede VENDIDO a medias. Un asiento se puede re-capturar si:
+  // - sigue RESERVADO con nuestra orden, aunque la reserva haya vencido;
+  // - está LIBRE (el job lo liberó y nadie lo tomó);
+  // - está RESERVADO por otra orden cuya reserva ya venció (expiración perezosa).
+  // Sin SKIP LOCKED: si otra transacción está tocando un asiento, se espera unos
+  // ms y Postgres re-evalúa el WHERE. Saltarlo daría un REEMBOLSO_REQUERIDO falso.
+  // ORDER BY id: el mismo orden de bloqueo que reservar, así no hay deadlock (C-09).
+  async recapturar(tx: Pick<Prisma.TransactionClient, '$queryRaw'>, ordenId: string): Promise<string[]> {
+    const vendidos = await tx.$queryRaw<{ id: string }[]>`
+      WITH candidatos AS (
+        SELECT a.id
+        FROM asientos a
+        JOIN orden_items oi ON oi.asiento_id = a.id AND oi.orden_id = ${ordenId}::uuid
+        WHERE (a.estado = 'RESERVADO' AND a.orden_id = ${ordenId}::uuid)
+           OR  a.estado = 'LIBRE'
+           OR (a.estado = 'RESERVADO' AND a.expires_at < now())
+        ORDER BY a.id
+        FOR UPDATE OF a
+      )
+      UPDATE asientos a
+      SET estado     = 'VENDIDO',
+          orden_id   = ${ordenId}::uuid,
+          expires_at = NULL,
+          version    = a.version + 1
+      FROM candidatos c
+      WHERE a.id = c.id
+      RETURNING a.id`;
+    return vendidos.map((a) => a.id);
+  }
+
+  // Libera los asientos que la orden todavía tenía RESERVADOS (pago tardío sin
+  // todos sus asientos, doc 04 §4.3). Mismo patrón de bloqueo: ORDER BY id.
+  async liberarDeOrden(tx: Pick<Prisma.TransactionClient, '$queryRaw'>, ordenId: string): Promise<string[]> {
+    const liberados = await tx.$queryRaw<{ id: string }[]>`
+      WITH nuestros AS (
+        SELECT id FROM asientos
+        WHERE orden_id = ${ordenId}::uuid AND estado = 'RESERVADO'
+        ORDER BY id
+        FOR UPDATE
+      )
+      UPDATE asientos a
+      SET estado = 'LIBRE', orden_id = NULL, expires_at = NULL, version = a.version + 1
+      FROM nuestros n
+      WHERE a.id = n.id
+      RETURNING a.id`;
+    return liberados.map((a) => a.id);
+  }
+
   // Snapshot del mapa (doc 05). Orden por largo y después por texto: con solo
   // texto, "AA" quedaría antes que "B". Usa el índice asientos(evento_id, estado).
   // La expiración perezosa (estado efectivo, doc 04 §6) llega con las reservas.
