@@ -166,10 +166,11 @@ Se recorta **de abajo hacia arriba**. Lo de arriba **no se negocia**.
 | 11 | Panel organizador completo | Eventos cargados por script de semilla |
 | 12 | Sala de espera virtual | Solo diseño (ya está en el doc 06) |
 
-## 5. Pendientes (huecos menores 10–14)
+## 5. Pendientes (huecos menores 10–15)
 
 - **10.** `01-vision-y-alcance.md` §7 cita `00-resumen-docente.md`, pero el archivo se llama `00-resumen.md`.
 - **11.** En la raíz hay un `arquitectura.md` vacío y un `README.md` de dos líneas, mientras RNF-13 promete "levantar todo en 5 min siguiendo el README".
 - **12.** Los plazos del job de expiración no coinciden: RNF-07 dice que limpia en ≤ 30 s y el test X-01 dice ≤ 15 s.
 - **13.** Con el Worker caído, la entrada aparece en "Mis entradas" pero **sin QR** (solo el Worker tiene la clave privada Ed25519). Falta decirlo en W-01 y en el guion de la demo.
 - **14.** El plan asigna `StripeTestAdapter` (semana 4) al Integrante A, mientras que la tabla de responsabilidades pone a C como dueño de pagos. Si es una rotación intencional, falta explicarlo.
+- **15.** Simulador de pagos, primer test en rojo del commit 7 (página, modos y despacho): crear un pago con `POST /ordenes/:id/pago`, llamar a `despacharPendientes()` y comprobar que **no** sale ningún webhook (la fila nace con `enviar_en = NULL`); después confirmar en `POST /simulador/pagar/:ref`, despachar de nuevo y comprobar que el webhook llega. No va en el commit 6 porque `despacharPendientes()` todavía no existe: importarlo daría un error de compilación, no un rojo.
