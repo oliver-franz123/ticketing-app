@@ -87,25 +87,30 @@ describe('Pagos: webhook del simulador', () => {
     return referencia;
   };
 
-  // El cuerpo como texto: se firma y se envía exactamente así.
-  const webhook = (orden: OrdenCreada, referencia: string, tipo = 'pago.exitoso') =>
+  // El cuerpo como texto: se firma y se envía exactamente así. `cambios` pisa
+  // cualquier campo (tipo, montoCentavos, moneda, id) para los casos raros.
+  const webhook = (orden: OrdenCreada, referencia: string, cambios: Record<string, unknown> = {}) =>
     JSON.stringify({
       id: `sim_evt_${fx.prefijoPagos}_${randomUUID().slice(0, 8)}`,
-      tipo,
+      tipo: 'pago.exitoso',
       referencia,
       ordenId: orden.ordenId,
       montoCentavos: orden.totalCentavos,
       moneda: 'BOB',
+      ...cambios,
     });
 
   // fetch y no supertest: supertest re-serializa el body y para P-01 hacen falta
   // envíos realmente paralelos (ver calentar en ordenes.e2e-spec).
-  const enviar = async (cuerpo: string, firma = firmaSimulador(cuerpo)) => {
-    const r = await fetch(`${url}/webhooks/pagos/simulador`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Simulador-Firma': firma },
-      body: cuerpo,
-    });
+  // firma = null: sin cabecera.
+  const enviar = async (
+    cuerpo: string,
+    firma: string | null = firmaSimulador(cuerpo),
+    { proveedor = 'simulador', contentType = 'application/json' } = {},
+  ) => {
+    const headers: Record<string, string> = { 'Content-Type': contentType };
+    if (firma !== null) headers['Simulador-Firma'] = firma;
+    const r = await fetch(`${url}/webhooks/pagos/${proveedor}`, { method: 'POST', headers, body: cuerpo });
     return r.status;
   };
 
@@ -117,6 +122,28 @@ describe('Pagos: webhook del simulador', () => {
 
   const outboxDe = (ordenId: string) =>
     prisma.outbox.findMany({ where: { payload: { path: ['ordenId'], equals: ordenId } }, select: { tipo: true } });
+
+  // Todo lo que un webhook puede tocar de una orden, para comparar antes y después.
+  // webhooks cuenta todos los eventos de esta corrida: un "nada cambia" también
+  // detecta una fila registrada con un id inesperado.
+  const estadoDe = async (orden: OrdenCreada) => ({
+    orden: (await prisma.orden.findUniqueOrThrow({ where: { id: orden.ordenId } })).estado,
+    pagos: await prisma.pago.findMany({ where: { ordenId: orden.ordenId }, select: { estado: true } }),
+    asientos: await prisma.asiento.findMany({
+      where: { items: { some: { ordenId: orden.ordenId } } },
+      select: { id: true, estado: true, ordenId: true },
+      orderBy: { id: 'asc' },
+    }),
+    entradas: await prisma.entrada.count({ where: { ordenId: orden.ordenId } }),
+    outbox: await outboxDe(orden.ordenId),
+    webhooks: await prisma.webhookEvento.count({ where: { eventoExternoId: { contains: fx.prefijoPagos } } }),
+  });
+
+  // Vence la reserva por SQL, sin que corra el job (como C-04).
+  const vencer = async (orden: OrdenCreada) => {
+    await prisma.$executeRaw`UPDATE ordenes SET expires_at = now() - interval '1 second' WHERE id = ${orden.ordenId}::uuid`;
+    await prisma.$executeRaw`UPDATE asientos SET expires_at = now() - interval '1 second' WHERE orden_id = ${orden.ordenId}::uuid AND estado = 'RESERVADO'`;
+  };
 
   describe('P-01: webhook duplicado', () => {
     it('el mismo webhook ×5 en paralelo → 5 × 200, 1 registro y la orden PAGADA una sola vez', async () => {
@@ -191,6 +218,180 @@ describe('Pagos: webhook del simulador', () => {
       // Reenvío del mismo evento: 200 y nada cambia.
       expect(await enviar(cuerpo)).toBe(200);
       expect(await estadoFinal()).toEqual(esperado);
+    });
+  });
+
+  describe('referencia desconocida: no se registra', () => {
+    it('un pago que no existe → 200 sin fila en webhook_eventos; cuando el pago existe, el mismo evento se procesa', async () => {
+      const evento = await eventoALaVenta();
+      const [ana] = await fx.crearCompradores(1);
+      const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
+      const referencia = `sim_pay_${fx.prefijoPagos}_${randomUUID().slice(0, 8)}`;
+      const cuerpo = webhook(orden, referencia);
+      const antes = await estadoDe(orden);
+
+      // El pago todavía no existe: 200 (no forzar reintentos de algo que no
+      // conocemos) pero el evento NO queda registrado.
+      expect(await enviar(cuerpo)).toBe(200);
+      expect(await estadoDe(orden)).toEqual(antes);
+
+      // Ahora el pago existe: el MISMO evento (mismo id) ya no es duplicado.
+      await prisma.pago.create({
+        data: {
+          ordenId: orden.ordenId,
+          proveedor: 'simulador',
+          referenciaExterna: referencia,
+          montoCentavos: BigInt(orden.totalCentavos),
+        },
+      });
+      expect(await enviar(cuerpo)).toBe(200);
+      expect(await estadoDe(orden)).toMatchObject({ orden: 'PAGADA', entradas: 2, webhooks: antes.webhooks + 1 });
+    });
+
+    it('una referencia de OTRA orden → 200 y no toca ninguna de las dos', async () => {
+      const evento = await eventoALaVenta();
+      const [ana, beto] = await fx.crearCompradores(2);
+      const deAna = await reservar(ana, evento.id, [evento.asientos[0]]);
+      const deBeto = await reservar(beto, evento.id, [evento.asientos[1]]);
+      const referenciaDeAna = await pagoEnProceso(deAna);
+      const antes = [await estadoDe(deAna), await estadoDe(deBeto)];
+
+      // Firmado bien, pero dice "esta referencia paga la orden de Beto".
+      expect(await enviar(webhook(deBeto, referenciaDeAna))).toBe(200);
+      expect([await estadoDe(deAna), await estadoDe(deBeto)]).toEqual(antes);
+    });
+  });
+
+  describe('P-02: firma inválida', () => {
+    it.each([
+      ['firmado con otro secreto', (c: string) => firmaSimulador(c, { secreto: 'otro-secreto-de-prueba-de-32-bytes-!!!!' })],
+      ['cuerpo alterado después de firmar', (c: string) => firmaSimulador(c.replace('"BOB"', '"BOB" '))],
+      ['t de hace 6 minutos (replay)', (c: string) => firmaSimulador(c, { t: Math.floor(Date.now() / 1000) - 360 })],
+      ['sin cabecera', () => null],
+      ['cabecera basura', () => 't=1,v1=xyz'],
+    ])('%s → 400 y nada cambia', async (_caso, firmar) => {
+      const evento = await eventoALaVenta();
+      const [ana] = await fx.crearCompradores(1);
+      const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
+      const referencia = await pagoEnProceso(orden);
+      const cuerpo = webhook(orden, referencia);
+      const antes = await estadoDe(orden);
+
+      expect(await enviar(cuerpo, firmar(cuerpo))).toBe(400);
+      expect(await estadoDe(orden)).toEqual(antes);
+    });
+
+    it('Content-Type que no es JSON (sin raw body) → 400', async () => {
+      const cuerpo = JSON.stringify({ id: 'sim_evt_x' });
+      expect(await enviar(cuerpo, firmaSimulador(cuerpo), { contentType: 'text/plain' })).toBe(400);
+    });
+
+    it('proveedor no habilitado → 404', async () => {
+      const cuerpo = JSON.stringify({ id: 'sim_evt_x' });
+      expect(await enviar(cuerpo, firmaSimulador(cuerpo), { proveedor: 'paypal' })).toBe(404);
+    });
+  });
+
+  describe('P-03: pago tardío que recupera todos sus asientos', () => {
+    const pagaTarde = async (preparar: (orden: OrdenCreada, otro: Usuario, eventoId: string) => Promise<void>) => {
+      const evento = await eventoALaVenta();
+      const [ana, beto] = await fx.crearCompradores(2);
+      const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
+      const referencia = await pagoEnProceso(orden);
+      await vencer(orden);
+      await preparar(orden, beto, evento.id);
+
+      expect(await enviar(webhook(orden, referencia))).toBe(200);
+      const final = await estadoDe(orden);
+      expect(final).toMatchObject({ orden: 'PAGADA', pagos: [{ estado: 'CONFIRMADO' }], entradas: 2 });
+      expect(final.outbox).toEqual([{ tipo: 'ENTRADAS_EMITIDAS' }]);
+      for (const a of final.asientos) expect(a).toMatchObject({ estado: 'VENDIDO', ordenId: orden.ordenId });
+    };
+
+    it('a) los asientos siguen RESERVADO con su orden_id (el job no corrió)', () => pagaTarde(async () => {}));
+
+    it('b) el job ya los liberó (LIBRE) y la orden quedó EXPIRADA', () =>
+      pagaTarde(async (orden) => {
+        await prisma.$executeRaw`UPDATE asientos SET estado = 'LIBRE', orden_id = NULL, expires_at = NULL WHERE orden_id = ${orden.ordenId}::uuid`;
+        await prisma.$executeRaw`UPDATE ordenes SET estado = 'EXPIRADA' WHERE id = ${orden.ordenId}::uuid`;
+      }));
+
+    it('c) otra orden tomó un asiento y su reserva también venció', () =>
+      pagaTarde(async (orden, beto, eventoId) => {
+        const [, a2] = (await estadoDe(orden)).asientos.map((a) => a.id);
+        const deBeto = await reservar(beto, eventoId, [a2]);
+        await vencer(deBeto);
+      }));
+  });
+
+  describe('P-05: rechazo y desorden', () => {
+    it('pago.fallido → pago FALLIDO; la orden sigue PENDIENTE_PAGO con sus asientos RESERVADO', async () => {
+      const evento = await eventoALaVenta();
+      const [ana] = await fx.crearCompradores(1);
+      const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
+      const referencia = await pagoEnProceso(orden);
+
+      expect(await enviar(webhook(orden, referencia, { tipo: 'pago.fallido' }))).toBe(200);
+      const final = await estadoDe(orden);
+      expect(final).toMatchObject({ orden: 'PENDIENTE_PAGO', pagos: [{ estado: 'FALLIDO' }], entradas: 0, outbox: [] });
+      for (const a of final.asientos) expect(a).toMatchObject({ estado: 'RESERVADO', ordenId: orden.ordenId });
+    });
+
+    it('FALLIDO después de EXITOSO → la orden sigue PAGADA y el pago CONFIRMADO', async () => {
+      const evento = await eventoALaVenta();
+      const [ana] = await fx.crearCompradores(1);
+      const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
+      const referencia = await pagoEnProceso(orden);
+
+      expect(await enviar(webhook(orden, referencia))).toBe(200);
+      const pagada = await estadoDe(orden);
+      expect(await enviar(webhook(orden, referencia, { tipo: 'pago.fallido' }))).toBe(200);
+
+      // Solo cambia que el segundo evento quedó registrado.
+      expect(await estadoDe(orden)).toEqual({ ...pagada, webhooks: pagada.webhooks + 1 });
+      expect(pagada).toMatchObject({ orden: 'PAGADA', pagos: [{ estado: 'CONFIRMADO' }] });
+    });
+  });
+
+  describe('P-06: monto o moneda distintos', () => {
+    it.each([
+      ['un centavo menos', (o: OrdenCreada) => ({ montoCentavos: o.totalCentavos - 1 })],
+      ['otra moneda', () => ({ moneda: 'USD' })],
+    ])('%s → REVISION_MANUAL, pago CONFIRMADO, 0 entradas y asientos sin vender', async (_caso, cambios) => {
+      const evento = await eventoALaVenta();
+      const [ana] = await fx.crearCompradores(1);
+      const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
+      const referencia = await pagoEnProceso(orden);
+
+      expect(await enviar(webhook(orden, referencia, cambios(orden)))).toBe(200);
+      const final = await estadoDe(orden);
+      expect(final).toMatchObject({ orden: 'REVISION_MANUAL', pagos: [{ estado: 'CONFIRMADO' }], entradas: 0, outbox: [] });
+      for (const a of final.asientos) expect(a.estado).toBe('RESERVADO');
+    });
+  });
+
+  describe('P-07: dos eventos distintos del mismo cobro', () => {
+    it('en paralelo → 2 × 200, 2 eventos registrados, 1 pago y 1 conjunto de entradas', async () => {
+      const evento = await eventoALaVenta();
+      const [ana] = await fx.crearCompradores(1);
+      const orden = await reservar(ana, evento.id, evento.asientos.slice(0, 2));
+      const referencia = await pagoEnProceso(orden);
+      const antes = await estadoDe(orden);
+
+      await calentar(2);
+      // Ids distintos: la idempotencia de webhook_eventos NO los frena. Lo hace
+      // el FOR UPDATE de la orden + el estado ya PAGADA (ORDEN_YA_RESUELTA).
+      const estados = await Promise.all([enviar(webhook(orden, referencia)), enviar(webhook(orden, referencia))]);
+
+      expect(estados).toEqual([200, 200]);
+      const final = await estadoDe(orden);
+      expect(final).toMatchObject({
+        orden: 'PAGADA',
+        pagos: [{ estado: 'CONFIRMADO' }],
+        entradas: 2,
+        webhooks: antes.webhooks + 2,
+      });
+      expect(final.outbox).toEqual([{ tipo: 'ENTRADAS_EMITIDAS' }]);
     });
   });
 });
