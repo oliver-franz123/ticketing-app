@@ -242,6 +242,10 @@ model Pago {
   @@unique([proveedor, referenciaExterna])
   // Reconciliación: EN_PROCESO cuyo creado_en supera el umbral del proveedor.
   @@index([proveedor, creadoEn], map: "ix_pagos_en_proceso", where: raw("estado = 'EN_PROCESO'"))
+  // Un solo cobro vivo por orden: un doble clic en "Pagar" no crea dos (doc 05).
+  // Parcial: tras un FALLIDO se puede crear otro. No usar findUnique por esta
+  // clave (ADR-0016): findFirst con estado = 'EN_PROCESO'.
+  @@unique([ordenId], map: "ux_pago_en_proceso_por_orden", where: raw("estado = 'EN_PROCESO'"))
   @@map("pagos")
 }
 
