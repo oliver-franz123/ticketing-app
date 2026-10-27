@@ -551,4 +551,59 @@ describe('Órdenes: reserva de asientos', () => {
       expect(await ordenesDe(usuario)).toBe(0);
     });
   });
+
+  describe('GET /ordenes/:id', () => {
+    const verOrden = (usuario: Usuario | null, id: string) => {
+      const req = request(url).get(`/ordenes/${id}`);
+      return usuario ? req.set('Authorization', `Bearer ${tokenDe(usuario)}`) : req;
+    };
+
+    it('el dueño ve estado, asientos (en orden de fila y columna), total y vencimiento', async () => {
+      const evento = await eventoALaVenta();
+      const [ana] = await fx.crearCompradores(1);
+      const asientoIds = [evento.asientos[6], evento.asientos[0]];
+      const creada = await reservar(ana, { eventoId: evento.id, asientoIds }).expect(201);
+
+      const res = await verOrden(ana, creada.body.ordenId).expect(200);
+      expect(res.body).toEqual({
+        ordenId: creada.body.ordenId,
+        eventoId: evento.id,
+        estado: 'PENDIENTE_PAGO',
+        asientos: [
+          { id: evento.asientos[0], fila: 'A', columna: 1 },
+          { id: evento.asientos[6], fila: 'B', columna: 2 },
+        ],
+        totalCentavos: 2 * PRECIO,
+        moneda: 'BOB',
+        expiresAt: creada.body.expiresAt,
+      });
+    });
+
+    it('A-02: la orden de otro comprador da el mismo 404 que una inexistente', async () => {
+      const evento = await eventoALaVenta();
+      const [ana, beto] = await fx.crearCompradores(2);
+      const creada = await reservar(ana, { eventoId: evento.id, asientoIds: [evento.asientos[0]] }).expect(201);
+
+      const ajena = await verOrden(beto, creada.body.ordenId).expect(404);
+      const inexistente = await verOrden(beto, randomUUID()).expect(404);
+      expect(ajena.body).toEqual(inexistente.body);
+    });
+
+    it('expiración perezosa: una PENDIENTE_PAGO vencida se informa EXPIRADA sin tocar la BD', async () => {
+      const evento = await eventoALaVenta();
+      const [ana] = await fx.crearCompradores(1);
+      const creada = await reservar(ana, { eventoId: evento.id, asientoIds: [evento.asientos[0]] }).expect(201);
+      await prisma.$executeRaw`UPDATE ordenes SET expires_at = now() - interval '1 second' WHERE id = ${creada.body.ordenId}::uuid`;
+
+      const res = await verOrden(ana, creada.body.ordenId).expect(200);
+      expect(res.body.estado).toBe('EXPIRADA');
+      expect((await prisma.orden.findUniqueOrThrow({ where: { id: creada.body.ordenId } })).estado).toBe('PENDIENTE_PAGO');
+    });
+
+    it('401 sin token, 403 como organizador, 400 si el id no es UUID', async () => {
+      await verOrden(null, randomUUID()).expect(401);
+      await verOrden(fx.usuarios.organizadorA, randomUUID()).expect(403);
+      await verOrden(fx.usuarios.comprador, 'no-es-uuid').expect(400);
+    });
+  });
 });
