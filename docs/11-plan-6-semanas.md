@@ -176,3 +176,33 @@ Se recorta **de abajo hacia arriba**. Lo de arriba **no se negocia**.
 - **15.** Simulador de pagos, primer test en rojo del commit 7 (página, modos y despacho): crear un pago con `POST /ordenes/:id/pago`, llamar a `despacharPendientes()` y comprobar que **no** sale ningún webhook (la fila nace con `enviar_en = NULL`); después confirmar en `POST /simulador/pagar/:ref`, despachar de nuevo y comprobar que el webhook llega. No va en el commit 6 porque `despacharPendientes()` todavía no existe: importarlo daría un error de compilación, no un rojo.
 - **16.** Cobro doble sin reembolso registrado. Secuencia: el pago A de una orden se marca FALLIDO; el comprador reintenta y nace el pago B (EN_PROCESO); llega tarde un `pago.exitoso` de A (el proveedor sí cobró) y la orden queda PAGADA; después también cobra B. El webhook de B ve la orden ya resuelta (`ORDEN_YA_RESUELTA`): marca B CONFIRMADO pero **no** deja constancia de que hay que devolver ese dinero. Lo cubrirá la reconciliación: un pago CONFIRMADO de una orden pagada por otro pago → reembolso requerido (tabla o estado a definir).
 - **17.** Dos mutaciones del simulador de pagos quedaron sin correr en el commit del verde (`feat(simulador): página, modos y despacho con lease y backoff`): (a) que `despacharPendientes()` tome también filas con `enviar_en IS NULL` (sin confirmar o ya entregadas): debería fallar el test «sin confirmación no sale ningún webhook…»; (b) que `firmar()` del simulador calcule el HMAC sin el `t` (`HMAC(secreto, cuerpo)`): la API respondería 400 a todos sus webhooks y deberían fallar los tests de punta a punta del simulador. Si alguna sobrevive, falta un test que la cubra.
+
+## 6. Estado al 27/10/2026: demo local
+
+### Qué quedó hecho
+
+| Pieza | Dónde | Evidencia |
+|---|---|---|
+| Reserva atómica + carrera 50 → 1 | `POST /ordenes`, `scripts/carrera.mjs` (`npm run demo:carrera`) | C-01 en e2e; el script sale con código 1 si no hay exactamente 1 × 201 |
+| Webhook idempotente con el simulador (modo DUPLICAR) | `POST /webhooks/pagos/simulador` | P-01..P-07; escena 2 del README |
+| Outbox + Worker + caída del Worker | Worker lee el outbox con SKIP LOCKED + lease (ADR-0017) | W-01 (`worker-apagado.e2e-spec.ts`), outbox e2e del Worker; escena 3 del README |
+| QR Ed25519 + PDF + email | Worker → Mailpit | W-02.. en e2e del Worker |
+| Validación en puerta con CAS | `POST /validaciones` `{qr, eventoId}` (VALIDADOR y ADMIN) | A-06: 10 escaneos simultáneos → 1 VALIDA + 9 YA_USADA. Mutación sin `AND estado = 'EMITIDA'` → 10 VALIDA, el test falla |
+| Consulta de la orden | `GET /ordenes/:id` (solo el dueño, expiración perezosa) | e2e en `ordenes.e2e-spec.ts` |
+| Recintos | Semilla (2 en Cochabamba) + `GET /recintos?ciudad=` | e2e en `eventos.e2e-spec.ts` |
+| Web mínima es-BO | `apps/web`: login, registro, eventos por ciudad, mapa (polling 5 s, hasta 6 asientos), orden con cuenta regresiva y Pagar, validador (pegar el QR) | `next build` en verde |
+| README "desde cero" + guion de 3 escenas | `README.md` | Resuelve el pendiente 11 (el `arquitectura.md` vacío sigue) |
+
+### Qué se recortó (y por qué alcanza para la demo)
+
+| Recorte | Qué lo reemplaza | Nota |
+|---|---|---|
+| **WebSocket / mapa en tiempo real multi-instancia** (prioridad 🔒 4 en §4) | Polling del mapa cada 5 s | **Cambia una prioridad "nunca se recorta"**: decisión del equipo para llegar a una demo local defendible. La correctitud no depende del WebSocket (la decide Postgres). ADR-0007 queda como diseño sin implementar |
+| BullMQ + Bull Board | El Worker consume el outbox directamente | ADR-0017 (diferido, con criterios para reincorporarlo) |
+| Asignación de validadores (`evento_validadores`, RF-53) | El validador elige el evento en la web; `OTRO_EVENTO` = el QR es de otro evento | Sin endpoint de asignación. La tabla existe y no se usa |
+| Validador con cámara (prioridad 6) | Pegar el texto del QR (fallback previsto en §4). Para la demo: escanear el PDF con la cámara del celular o `npm run qr:entrada -w @entradas/worker` | — |
+| Job `liberar-vencidas` (prioridad 5) | Expiración perezosa en la reserva, en el mapa y en `GET /ordenes/:id` | Correctitud intacta: un asiento vencido se puede volver a reservar (C-04) |
+| `DELETE /ordenes/:id`, mis-entradas y PDF por la API | Las entradas llegan por email | El pendiente 13 sigue abierto hasta que exista mis-entradas |
+| Rate limit con Redis, `/metrics`, panel `/admin/demo` | Logs de la API y del Worker + consultas SQL del README | "Logs y métricas visibles" queda solo con logs y SQL |
+| `StripeTestAdapter` (prioridad 7) | Simulador como proveedor principal (ADR-0015) | — |
+| Panel del organizador (prioridad 11) | Eventos por `POST /eventos` (lo hace `demo:carrera`) y recintos por semilla | — |
