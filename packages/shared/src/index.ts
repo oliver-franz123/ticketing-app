@@ -5,3 +5,5 @@ export const LOCALE = 'es-BO';
 
 // Los montos viajan siempre como enteros en centavos de esta moneda.
 export const MONEDA = 'BOB';
+
+export * from './pagos';
