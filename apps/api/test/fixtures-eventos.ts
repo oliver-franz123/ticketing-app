@@ -51,11 +51,29 @@ export async function crearFixtures(prisma: PrismaService) {
     validador: await usuario('validador', Rol.VALIDADOR),
   };
 
+  // N compradores distintos de una vez (C-01 necesita 50: el límite por usuario
+  // y RN-04 no deben intervenir). Mismo dominio y sufijo: limpiar() los borra.
+  const crearCompradores = async (n: number) => {
+    const lote = randomUUID().slice(0, 8);
+    const emails = Array.from({ length: n }, (_, i) => `comprador-${lote}-${i}-${sufijo}${DOMINIO}`);
+    await prisma.usuario.createMany({
+      data: emails.map((email, i) => ({ email, passwordHash: 'no-se-usa', nombre: `Comprador ${i}`, rol: Rol.COMPRADOR })),
+    });
+    return prisma.usuario.findMany({
+      where: { email: { in: emails } },
+      select: { id: true, rol: true },
+      orderBy: { email: 'asc' },
+    });
+  };
+
   const limpiar = async () => {
     const recintos = [recintoA.id, recintoB.id];
     const eventos = { evento: { recintoId: { in: recintos } } };
-    // Orden inverso a las FK (todas son RESTRICT).
+    // Orden inverso a las FK (todas son RESTRICT). Los asientos apuntan a las
+    // órdenes: se borran antes que ellas.
+    await prisma.ordenItem.deleteMany({ where: { orden: eventos } });
     await prisma.asiento.deleteMany({ where: eventos });
+    await prisma.orden.deleteMany({ where: eventos });
     await prisma.zona.deleteMany({ where: eventos });
     await prisma.evento.deleteMany({ where: { recintoId: { in: recintos } } });
     await prisma.recinto.deleteMany({ where: { id: { in: recintos } } });
@@ -63,7 +81,7 @@ export async function crearFixtures(prisma: PrismaService) {
     await prisma.usuario.deleteMany({ where: { email: { endsWith: `${sufijo}${DOMINIO}` } } });
   };
 
-  return { ciudadA, ciudadB, recintoA, recintoB, usuarios, limpiar };
+  return { ciudadA, ciudadB, recintoA, recintoB, usuarios, crearCompradores, limpiar };
 }
 
 export type Fixtures = Awaited<ReturnType<typeof crearFixtures>>;

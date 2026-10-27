@@ -88,7 +88,7 @@ sequenceDiagram
     participant RD as Redis
     participant API2
     participant B as Beto (API 2)
-    A->>API1: POST /reservas (gana)
+    A->>API1: POST /ordenes (gana)
     API1->>API1: COMMIT en Postgres
     API1->>RD: PUBLISH sala evento:42:zona:platea (delta)
     RD-->>API2: mensaje
@@ -108,7 +108,7 @@ sequenceDiagram
 | Endpoint | Límite | Clave |
 |---|---|---|
 | `POST /auth/login` | 5/min | IP + email (contra fuerza bruta) |
-| `POST /eventos/:id/reservas` | 10/min por usuario · por IP: `RATE_LIMIT_RESERVAS_IP` (30/min por defecto, ≥ 100/min en demo) | usuario. Además IP (protege contra bots con muchas cuentas) |
+| `POST /ordenes` | 10/min por usuario · por IP: `RATE_LIMIT_RESERVAS_IP` (30/min por defecto, ≥ 100/min en demo) | usuario. Además IP (protege contra bots con muchas cuentas) |
 | `GET /eventos/:id/asientos` | 60/min | IP |
 | `POST /validaciones` | 120/min | validador |
 
@@ -121,7 +121,7 @@ sequenceDiagram
 En lugar de dejar entrar a 30.000 personas a la vez, se las **admite a ritmo controlado** (p. ej. 500 cada 10 s):
 1. A la hora de apertura, el usuario recibe un **turno** (`ZADD sala:42 <timestamp> <usuario>` en Redis).
 2. Un proceso admite a los primeros N y les da un **token de admisión** firmado con validez de 10 min.
-3. `POST /reservas` exige ese token.
+3. `POST /ordenes` exige ese token.
 
 Aquí Redis **sí** tiene sentido: el orden de la fila es una optimización de experiencia, no una garantía de correctitud. Si se pierde, se reconstruye y nadie pierde un asiento ya reservado.
 

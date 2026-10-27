@@ -1,5 +1,7 @@
 // Mismos valores que el CHECK eventos_estado_chk de la migración.
 // BORRADOR → PUBLICADO (congela el mapa) → FINALIZADO; BORRADOR/PUBLICADO → CANCELADO.
+// Congelar = no hay vuelta a BORRADOR: todo endpoint que edite zonas o asientos
+// tiene que exigir estado BORRADOR (RF-23).
 export const EstadoEvento = {
   BORRADOR: 'BORRADOR',
   PUBLICADO: 'PUBLICADO',

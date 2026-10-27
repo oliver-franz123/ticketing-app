@@ -96,6 +96,10 @@ El estado `RESERVADO` + `expires_at` es un **"lock lógico" persistido**: dura m
 
 ### 4.1 Reservar (todo o nada)
 
+`POST /ordenes` (código: `OrdenesService.crear` e `InventarioService.reservar`). Todos los pasos van en **una** transacción.
+
+**Paso A, el evento tiene que estar a la venta.** `SELECT estado, venta_inicio <= now(), inicio > now() FROM eventos WHERE id = $evento`. Si no existe o es BORRADOR: 404, el mismo del mapa. Si está CANCELADO o FINALIZADO: 409 `EVENTO_NO_DISPONIBLE`. Fuera de la ventana de RN-09: 409 `VENTA_NO_ABIERTA` o `VENTA_CERRADA`.
+
 **Paso 0, RN-04 sin depender del job.** El índice único `ordenes(usuario_id, evento_id) WHERE estado='PENDIENTE_PAGO'` impide que un usuario tenga dos órdenes pendientes en el mismo evento. Pero si su orden anterior **ya venció** y el job todavía no la marcó (por ejemplo, con el Worker caído), el índice lo bloquearía igual. Por eso la transacción de reservar empieza marcando EXPIRADA esa orden vencida:
 
 ```sql
@@ -114,17 +118,23 @@ No hace falta tocar sus asientos: la expiración perezosa ya los trata como libr
 
 ```sql
 INSERT INTO ordenes (id, usuario_id, evento_id, estado, expires_at, extension_usada,
-                     idempotency_key, total_centavos, moneda)
+                     idempotency_key, total_centavos, moneda, nit, razon_social)
 VALUES ($orden, $usuario, $evento, 'PENDIENTE_PAGO',
-        now() + interval '5 minutes', false, $idempotencyKey,
-        (SELECT sum(z.precio_centavos)                 -- precio de cada zona al reservar (RN-05)
-           FROM asientos a JOIN zonas z ON z.id = a.zona_id
-          WHERE a.evento_id = $evento AND a.id = ANY($ids)),
-        'BOB');
+        now() + make_interval(secs => $ttl), false, $idempotencyKey,  -- RESERVA_TTL_SEGUNDOS (300)
+        COALESCE((SELECT sum(z.precio_centavos)        -- precio de cada zona al reservar (RN-05)
+                    FROM asientos a JOIN zonas z ON z.id = a.zona_id
+                   WHERE a.evento_id = $evento AND a.id = ANY($ids)), 0),
+        'BOB', $nit, $razonSocial)
+ON CONFLICT DO NOTHING
+RETURNING id, expires_at, total_centavos;
 ```
 
-- Si choca con el índice de RN-04: ROLLBACK y **409 `ORDEN_PENDIENTE_EXISTENTE`**, sin haber tocado ningún asiento.
-- Si choca con `UNIQUE(usuario_id, idempotency_key)`: es un reintento. ROLLBACK y se devuelve la orden que ya existe (**201** con el mismo `ordenId`, C-06).
+- `ON CONFLICT DO NOTHING` sin columnas cubre **las dos** claves únicas: `UNIQUE(usuario_id, idempotency_key)` y el índice parcial de RN-04. Hay dos ventajas frente a capturar el error 23505. La primera: la transacción no queda abortada. La segunda: si otra transacción acaba de insertar la misma clave, Postgres **espera** a que termine antes de decidir. Así, 20 reintentos simultáneos crean una sola orden (C-06).
+- Si devuelve 0 filas, se busca la orden del usuario con esa clave:
+  - existe con el mismo evento y los mismos asientos: es un reintento y se devuelve la orden que ya existe (**201**, mismo cuerpo, C-06);
+  - existe con otro pedido: **422 `IDEMPOTENCY_KEY_REUTILIZADA`**;
+  - no existe: el choque fue con RN-04, **409 `ORDEN_PENDIENTE_EXISTENTE`**, sin haber tocado ningún asiento (C-07).
+- `COALESCE(…, 0)`: si ningún id es del evento, `sum` da NULL y chocaría con el NOT NULL. Con 0 la orden se inserta y el paso 3 hace el ROLLBACK con 409.
 
 **Paso 2, tomar los asientos:**
 
@@ -145,11 +155,11 @@ WITH candidatos AS (
 UPDATE asientos a
 SET estado     = 'RESERVADO',
     orden_id   = $orden,
-    expires_at = now() + interval '5 minutes',
+    expires_at = now() + make_interval(secs => $ttl),
     version    = a.version + 1
 FROM candidatos c
 WHERE a.id = c.id
-RETURNING a.id, a.version;
+RETURNING a.id;
 ```
 
 **Paso 3, confirmar o deshacer todo:**
@@ -205,6 +215,8 @@ CHECK (
 ```
 
 > Nota sobre `SKIP LOCKED`: si la transacción que tenía bloqueada la fila termina en ROLLBACK, el segundo usuario recibió un 409 que en teoría no correspondía. Lo aceptamos: es raro, dura milisegundos y el usuario ve el asiento libre de nuevo en el mapa. A cambio, nadie se queda esperando un lock.
+>
+> Caso concreto, medido en C-03: dos órdenes piden {1, 2} al mismo tiempo. T1 bloquea el 1, T2 salta el 1 y bloquea el 2, y T1 salta el 2. Las dos quedan incompletas, hacen ROLLBACK y **ambas reciben 409**. Pasó en 1 a 3 de cada 100 rondas. Por eso los tests de reservas cruzadas exigen «**como mucho** una gana y nunca hay parciales», no «exactamente una gana». Con un solo asiento (C-01) siempre gana exactamente uno: el primero que lo bloquea consigue todo lo que pidió.
 
 Así, la invariante RN-01 queda garantizada **por la base de datos**, no solo por nuestro código. Esto es *defensa en profundidad*.
 
@@ -286,9 +298,9 @@ sequenceDiagram
     participant RD as Redis (pub/sub)
 
     par Casi al mismo tiempo
-        Ana->>API1: POST /eventos/42/reservas {asientos:[F-12]}
+        Ana->>API1: POST /ordenes {eventoId:42, asientoIds:[F-12]}
     and
-        Beto->>API2: POST /eventos/42/reservas {asientos:[F-12]}
+        Beto->>API2: POST /ordenes {eventoId:42, asientoIds:[F-12]}
     end
 
     API1->>PG: BEGIN · INSERT ordenes (PENDIENTE_PAGO) · UPDATE asientos ... WHERE estado='LIBRE' ...
@@ -365,8 +377,8 @@ RETURNING a.id, a.evento_id, a.version;
 ## 8. Qué probamos con TDD (adelanto del doc 10)
 
 1. 50 reservas concurrentes del mismo asiento ⇒ exactamente 1 éxito.
-2. 2 órdenes con asientos solapados {1,2,3} y {3,4,5} ⇒ una gana todo y la otra recibe 409, sin reservas parciales.
-3. 2 órdenes con asientos en orden inverso ⇒ ningún deadlock (timeout del test: 5 s).
+2. 2 órdenes con asientos solapados {1,2,3} y {3,4,5} ⇒ como mucho una gana todo y la otra recibe 409, sin reservas parciales (con `SKIP LOCKED` pueden perder las dos, §4.2).
+3. 2 órdenes con asientos en orden inverso ⇒ ningún deadlock (timeout del test: 5 s). Con `SKIP LOCKED` la reserva nunca espera, así que este test es una guardia de regresión; el orden fijo es decisivo en la re-captura (C-09).
 4. Una reserva vencida (reloj de BD manipulado con `expires_at` en el pasado) ⇒ otra orden puede reservar sin que corra el job.
 5. El job de expiración con 2 instancias en paralelo ⇒ cada asiento se libera una vez.
 6. Validación doble concurrente ⇒ una VÁLIDA y una YA_USADA.

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, Rol } from '@entradas/db';
 import type { UsuarioAutenticado } from '../auth/tipos';
 import { InventarioService } from '../inventario/inventario.service';
@@ -67,6 +67,28 @@ export class EventosService {
         totalAsientos,
       };
     });
+  }
+
+  // RF-23. CAS sin leer antes: dos PATCH a la vez no pueden publicar los dos.
+  // El dueño va en el WHERE, así que un ORGANIZADOR ajeno ve el mismo 404 que
+  // un id inexistente (no se revela que el borrador existe).
+  async publicar(usuario: UsuarioAutenticado, id: string) {
+    const { count } = await this.prisma.evento.updateMany({
+      where: {
+        id,
+        estado: EstadoEvento.BORRADOR,
+        ...(usuario.rol !== Rol.ADMIN && { organizadorId: usuario.id }),
+      },
+      data: { estado: EstadoEvento.PUBLICADO },
+    });
+    if (count === 1) return { id, estado: EstadoEvento.PUBLICADO };
+
+    // id es la PK (único total): findUnique es correcto aquí (ADR-0016).
+    const evento = await this.prisma.evento.findUnique({ where: { id }, select: { organizadorId: true } });
+    if (!evento || (usuario.rol !== Rol.ADMIN && evento.organizadorId !== usuario.id)) {
+      throw new NotFoundException('Evento no encontrado');
+    }
+    throw new ConflictException('El evento ya no está en BORRADOR');
   }
 
   // RF-10: por ciudad (slug) y estado, por fecha. Usa los índices eventos(estado, inicio)

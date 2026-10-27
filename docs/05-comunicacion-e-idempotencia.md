@@ -8,7 +8,7 @@
 | **WebSocket (Socket.IO)** | **Solo** el estado de los asientos en vivo (servidor → cliente) | Empuja cambios sin que el cliente pregunte. Con polling a 1 s, 5.000 usuarios harían 5.000 req/s solo para "¿cambió algo?" |
 | **Cola (BullMQ sobre Redis)** | Generar QR + PDF, enviar el email y el job de expiración | Trabajo lento o frágil que **no** debe bloquear al comprador y que necesita reintentos |
 
-**Regla de oro:** el WebSocket **solo informa**, nunca decide. Para reservar siempre se usa `POST /reservas` (REST). Así las acciones importantes tienen respuesta, código de error e `Idempotency-Key`, y el WS se puede perder sin consecuencias.
+**Regla de oro:** el WebSocket **solo informa**, nunca decide. Para reservar siempre se usa `POST /ordenes` (REST). Así las acciones importantes tienen respuesta, código de error e `Idempotency-Key`, y el WS se puede perder sin consecuencias.
 
 ### ¿Por qué no GraphQL?
 
@@ -18,7 +18,7 @@
 - **Por qué:**
   - Tenemos **pocos endpoints fijos** (≈20). GraphQL rinde cuando hay muchos clientes con necesidades de datos distintas, y nosotros tenemos uno.
   - El **caché HTTP** del catálogo (CDN, `Cache-Control`) es trivial en REST y difícil en GraphQL (todo es `POST /graphql`).
-  - El **rate limiting por endpoint** (p. ej. `/reservas`) es directo en REST. En GraphQL habría que analizar la consulta.
+  - El **rate limiting por endpoint** (p. ej. `POST /ordenes`) es directo en REST. En GraphQL habría que analizar la consulta.
   - Las **suscripciones GraphQL** usan WebSocket por debajo. No resuelven el escalado: tendríamos el mismo problema con una capa más encima.
   - Curva de aprendizaje: 6 semanas.
   - gRPC no corre nativamente en el navegador y no tenemos comunicación entre servicios.
@@ -33,13 +33,14 @@
 | `GET /eventos/:id` | público | 200 |
 | `GET /eventos/:id/asientos` | público | 200 `{eventoId, version, zonas:[...], asientos:[...]}` (snapshot) · 404 si no existe **o es BORRADOR** (mismo mensaje) |
 | `GET /eventos/:id/asientos?desdeVersion=812` | público | 200 `{version, cambios:[...]}` (delta para polling) |
-| `POST /eventos/:id/reservas` + `Idempotency-Key` | comprador | 201 `{ordenId, expiresAt, totalCentavos}` · **409** `{noDisponibles}` · 429 |
+| `POST /ordenes` `{eventoId, asientoIds, nit?, razonSocial?}` + `Idempotency-Key` (UUID, obligatorio) | comprador | 201 `{ordenId, eventoId, estado, asientoIds, totalCentavos, moneda, expiresAt}` (también en el reintento con la misma clave) · 400 (DTO, 1 a 6 asientos sin repetir, header ausente o inválido) · 404 (evento inexistente **o BORRADOR**) · **409** con `codigo`: `ASIENTOS_NO_DISPONIBLES` + `{noDisponibles}` (qué asientos, nunca de quién), `ORDEN_PENDIENTE_EXISTENTE` (RN-04), `EVENTO_NO_DISPONIBLE`, `VENTA_NO_ABIERTA`, `VENTA_CERRADA` (RN-09) · 422 `IDEMPOTENCY_KEY_REUTILIZADA` · 429 |
 | `DELETE /ordenes/:id` | comprador (dueño) | 204 |
 | `POST /ordenes/:id/pago` | comprador (dueño) | 200 `{proveedor, redirectUrl \| clientSecret}` |
 | `POST /webhooks/pagos/:proveedor` | proveedor (firma) | **200** siempre que la firma sea válida (incluso si es duplicado) · 400 si la firma es inválida |
 | `GET /mis-entradas` · `GET /entradas/:id/pdf` | comprador | 200 |
 | `POST /validaciones` `{qr}` | validador | 200 `{resultado: VALIDA \| YA_USADA \| INVALIDA \| OTRO_EVENTO, usadaEn?}` |
 | `POST /eventos` | organizador o admin | 201: evento BORRADOR + zona + grilla de asientos LIBRE, en una transacción · 400 (validación, recinto inexistente, grilla > 15.000 asientos) · 403 (un organizador a nombre de otro) |
+| `PATCH /eventos/:id/publicar` | organizador (dueño) o admin | 200 `{id, estado: "PUBLICADO"}`: BORRADOR → PUBLICADO sin vuelta atrás (congela el mapa) · 404 si no existe **o es de otro organizador** (mismo mensaje) · 409 si ya no está en BORRADOR |
 
 **Auth y enumeración de usuarios (T9):**
 - **Login:** responde lo mismo, `401 {"message": "Email o contraseña incorrectos"}`, cuando el email no existe y cuando la contraseña está mal. Si el email no existe, se verifica igual contra un hash señuelo de argon2id, para que el tiempo de respuesta no delate qué emails están registrados.
@@ -172,7 +173,7 @@ sequenceDiagram
 
 | Capa | Riesgo de duplicado | Mecanismo |
 |---|---|---|
-| Cliente → `POST /reservas` | El usuario toca dos veces, o la red reintenta | Header `Idempotency-Key` (UUID v4 del cliente) guardado con la orden: `UNIQUE(usuario_id, idempotency_key)`. Repetir devuelve la misma respuesta |
+| Cliente → `POST /ordenes` | El usuario toca dos veces, o la red reintenta | Header `Idempotency-Key` (UUID v4 del cliente) guardado con la orden: `UNIQUE(usuario_id, idempotency_key)`. El INSERT usa `ON CONFLICT DO NOTHING`: si la clave ya existe, se devuelve la misma orden (201, mismo cuerpo); si se reutiliza con otro evento u otros asientos, 422. **Solo se guardan los éxitos:** un 409 hace ROLLBACK de la orden, así que reintentar con la misma clave vuelve a intentar la reserva (el asiento pudo liberarse) |
 | Proveedor → webhook | El proveedor reintenta, o el simulador envía a propósito 2–5 veces | `webhook_eventos UNIQUE(proveedor, evento_externo_id)` dentro de la **misma transacción** que emite las entradas |
 | Mismo pago con eventos distintos | Dos eventos diferentes (`checkout.session.completed` y `payment_intent.succeeded`) por el mismo cobro | `pagos UNIQUE(proveedor, referencia_externa)` + la orden solo pasa de PENDIENTE a PAGADA una vez (`UPDATE ... WHERE estado IN ('PENDIENTE_PAGO','EXPIRADA')`) |
 | Emisión de entradas | Bug o carrera | Índice único parcial por asiento (doc 04) |
