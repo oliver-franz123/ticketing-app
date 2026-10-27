@@ -189,14 +189,16 @@ describe('Validaciones: POST /validaciones', () => {
   describe('acceso y contrato', () => {
     it('401 sin token', () => validar(null, { qr: 'x', eventoId: randomUUID() }).expect(401));
 
-    it.each([['comprador'], ['organizadorA']] as const)('403 como %s', (rol) =>
-      validar(fx.usuarios[rol], { qr: 'x', eventoId: randomUUID() }).expect(403),
-    );
+    it.each([['comprador'], ['organizadorA']] as const)('403 como %s', async (rol) => {
+      await validar(fx.usuarios[rol], { qr: 'x', eventoId: randomUUID() }).expect(403);
+    });
 
     it.each([
       ['sin eventoId', { qr: 'x' }],
       ['eventoId que no es UUID', { qr: 'x', eventoId: '42' }],
       ['qr de más de 1 KB', { qr: 'x'.repeat(1025), eventoId: randomUUID() }],
-    ])('400: %s', (_caso, body) => validar(fx.usuarios.validador, body).expect(400));
+    ])('400: %s', async (_caso, body) => {
+      await validar(fx.usuarios.validador, body).expect(400);
+    });
   });
 });
