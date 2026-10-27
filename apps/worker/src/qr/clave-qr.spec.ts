@@ -1,10 +1,15 @@
-import { ConfigService } from '@nestjs/config';
+import type { ConfigService } from '@nestjs/config';
 import { generateKeyPairSync } from 'node:crypto';
 import { leerClavePrivadaQr } from './clave-qr';
 
 // Sin la clave privada el Worker no puede emitir entradas: mejor no arrancar
 // que procesar el outbox y fallar fila por fila.
-const configCon = (valor?: string) => new ConfigService(valor === undefined ? {} : { QR_SIGNING_PRIVATE_KEY: valor });
+// ConfigService de mentira: solo devuelve lo que pasa el caso. El real también
+// lee process.env, y en CI ahí hay una clave válida (el caso "falta" no fallaba).
+const configCon = (valor?: string) => {
+  const valores: Record<string, string> = valor === undefined ? {} : { QR_SIGNING_PRIVATE_KEY: valor };
+  return { get: (clave: string) => valores[clave] } as unknown as ConfigService;
+};
 const der = (tipo: 'ed25519' | 'x25519') =>
   generateKeyPairSync(tipo as 'ed25519').privateKey.export({ type: 'pkcs8', format: 'der' }).toString('base64');
 

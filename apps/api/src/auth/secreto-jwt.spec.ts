@@ -1,13 +1,14 @@
-import { ConfigService } from '@nestjs/config';
+import type { ConfigService } from '@nestjs/config';
 import { leerSecretoJwt } from './secreto-jwt';
 
-const config = (JWT_SECRET?: string) => new ConfigService(JWT_SECRET === undefined ? {} : { JWT_SECRET });
+// ConfigService de mentira: solo devuelve lo que pasa el caso. El real también
+// lee process.env, y en CI ahí está el JWT_SECRET del workflow.
+const config = (JWT_SECRET?: string) => {
+  const valores: Record<string, string> = JWT_SECRET === undefined ? {} : { JWT_SECRET };
+  return { get: (clave: string) => valores[clave] } as unknown as ConfigService;
+};
 
 describe('leerSecretoJwt', () => {
-  const env = process.env.JWT_SECRET;
-  beforeEach(() => delete process.env.JWT_SECRET);
-  afterAll(() => (process.env.JWT_SECRET = env));
-
   it('falla si falta', () => {
     expect(() => leerSecretoJwt(config())).toThrow(/JWT_SECRET/);
   });
