@@ -9,7 +9,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { configurarApp } from '../src/configurar-app';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { SimuladorPagosService } from '../src/simulador-pagos/simulador-pagos.service';
+import { type ResultadoDespacho, SimuladorPagosService } from '../src/simulador-pagos/simulador-pagos.service';
 import { firmaSimulador, SECRETO_SIMULADOR } from './firma-simulador-prueba';
 import { crearFixtures, enDias, type Fixtures, SECRETO, tokenDe } from './fixtures-eventos';
 
@@ -776,12 +776,38 @@ describe('Pagos: webhook del simulador', () => {
       expect(await despachar(referencia)).toEqual([]);
     });
 
-    it('dos despachos simultáneos → el webhook sale una sola vez (lease con FOR UPDATE SKIP LOCKED)', async () => {
+    it('una fila con el lease tomado por otra instancia (sin commit) no se despacha ni se espera (FOR UPDATE SKIP LOCKED)', async () => {
       const { referencia } = await pagoCreado();
       await confirmar(referencia, { modo: 'OK' }).expect(200);
 
-      const [a, b] = await Promise.all([despachar(referencia), despachar(referencia)]);
-      expect([...a, ...b]).toEqual([{ referencia, envios: 1, entregado: true }]);
+      let otraInstanciaTermino = false;
+      let despacho!: Promise<ResultadoDespacho[]>;
+      let terminoAntesQueLaOtra = false;
+
+      // "Otra instancia" toma el lease: corre enviar_en 30 s y mantiene la fila
+      // bloqueada sin confirmar. Mientras tanto, este proceso despacha por otra
+      // conexión del pool.
+      await prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`UPDATE simulador_pagos SET enviar_en = now() + interval '30 seconds' WHERE referencia = ${referencia}`;
+          despacho = despachar(referencia);
+          void despacho.then(() => {
+            terminoAntesQueLaOtra = !otraInstanciaTermino;
+          });
+          // Tiempo de sobra para que el despacho llegue a la fila bloqueada
+          // (500 ms: margen para un runner de CI lento).
+          await new Promise((listo) => setTimeout(listo, 500));
+        },
+        { timeout: 5000 },
+      );
+      otraInstanciaTermino = true;
+
+      // SKIP LOCKED: no la toma y no espera al lock. Sin el lock, el despacho
+      // espera, y al confirmarse la otra transacción la toma igual con la foto
+      // vieja: el webhook saldría dos veces.
+      expect(await despacho).toEqual([]);
+      expect(terminoAntesQueLaOtra).toBe(true);
+      expect(await eventosDe(referencia)).toEqual([]);
     });
   });
 });
