@@ -1032,15 +1032,50 @@ button.asiento.libre:hover {
   font-weight: 600;
 }
 
-/* ---------- Validador (se rediseña en su propio commit) ---------- */
+/* ---------- Validador ---------- */
+
+.pagina-validador {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.pagina-validador h1 {
+  margin-bottom: var(--e-1);
+}
+
+.pagina-validador > .suave {
+  margin: 0 0 var(--e-4);
+}
+
+select:disabled {
+  background: var(--c-fondo-alt);
+  color: var(--c-suave);
+}
 
 .resultado {
-  font-size: var(--t-xl);
-  font-weight: 800;
-  text-align: center;
-  padding: var(--e-6) var(--e-3);
+  display: grid;
+  justify-items: center;
+  gap: var(--e-1);
+  margin-top: var(--e-4);
+  padding: var(--e-6) var(--e-4);
   border-radius: var(--r-md);
   color: var(--c-sobre-acento);
+  text-align: center;
+}
+
+.resultado strong {
+  font-size: var(--t-xl);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.resultado-icono {
+  display: inline-flex;
+  font-size: 48px;
+}
+
+.resultado-icono .icono {
+  stroke-width: 3;
 }
 
 .resultado.VALIDA {
