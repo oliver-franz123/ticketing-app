@@ -103,7 +103,7 @@ Más importante todavía: **API y BD en la misma región.** Una reserva hace 2�
 **Elección:** **opción 1**, con la **opción 2 como plan B** si la tarjeta o el costo de Fly dan problemas.
 
 **Por qué:**
-- Fly es la única plataforma con cómputo en São Paulo, en la **misma ciudad** que Supabase.
+- Fly es la única plataforma con cómputo en São Paulo, en la **misma ciudad** que Supabase increible no .
 - Redis en Fly dentro de la **red privada**: sin límites por comando (BullMQ consume en reposo), sin exponer Redis a Internet y con latencia mínima.
 - Varias máquinas de la API en una línea (`fly scale count 2`): demostramos el WebSocket multi-instancia de verdad.
 - La opción 3 se descarta: los arranques en frío de Render, la cuota de comandos de Upstash y un Worker en la laptop de alguien hacen la demo frágil.
