@@ -1,0 +1,262 @@
+/* Estilos mínimos, sin librerías: la web tiene que cargar rápido en redes móviles. */
+:root {
+  --fondo: #f7f7f5;
+  --texto: #1d1d1b;
+  --suave: #6b6b66;
+  --borde: #d9d9d4;
+  --tarjeta: #ffffff;
+  --primario: #0b6e4f;
+  --primario-texto: #ffffff;
+  --libre: #e3f4ec;
+  --elegido: #0b6e4f;
+  --ocupado: #c9c9c4;
+  --ok: #0b6e4f;
+  --aviso: #a15c00;
+  --error: #b42318;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: var(--fondo);
+  color: var(--texto);
+  line-height: 1.45;
+}
+
+header.barra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--tarjeta);
+  border-bottom: 1px solid var(--borde);
+}
+
+header.barra .marca {
+  font-weight: 700;
+  margin-right: auto;
+  color: var(--texto);
+  text-decoration: none;
+}
+
+header.barra a,
+header.barra button.enlace {
+  color: var(--primario);
+  font-size: 0.95rem;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 8px 0 16px;
+}
+
+.tarjeta {
+  background: var(--tarjeta);
+  border: 1px solid var(--borde);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.tarjeta a {
+  color: inherit;
+}
+
+.suave {
+  color: var(--suave);
+  font-size: 0.9rem;
+}
+
+form.pila {
+  display: grid;
+  gap: 12px;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.95rem;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--borde);
+  border-radius: 8px;
+  background: #fff;
+  width: 100%;
+}
+
+textarea {
+  min-height: 120px;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.boton {
+  display: inline-block;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--primario);
+  color: var(--primario-texto);
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  min-height: 44px;
+}
+
+.boton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.enlace {
+  background: none;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.mensaje {
+  padding: 12px;
+  border-radius: 8px;
+  margin: 12px 0;
+}
+
+.mensaje.error {
+  background: #fdecea;
+  color: var(--error);
+}
+
+.mensaje.ok {
+  background: var(--libre);
+  color: var(--ok);
+}
+
+.mensaje.aviso {
+  background: #fff4e0;
+  color: var(--aviso);
+}
+
+/* Mapa de asientos: rejilla con tantas columnas como la fila más larga. */
+.mapa {
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.fila {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.fila .etiqueta {
+  width: 24px;
+  flex: none;
+  font-size: 0.8rem;
+  color: var(--suave);
+  text-align: center;
+}
+
+.asiento {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 6px;
+  border: 1px solid var(--borde);
+  background: var(--libre);
+  font-size: 0.75rem;
+  padding: 0;
+}
+
+.asiento.elegido {
+  background: var(--elegido);
+  color: #fff;
+  border-color: var(--elegido);
+}
+
+.asiento:disabled {
+  background: var(--ocupado);
+  color: var(--suave);
+  cursor: not-allowed;
+}
+
+.leyenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.85rem;
+  margin: 8px 0 16px;
+}
+
+.leyenda span::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 4px;
+  vertical-align: -1px;
+  border: 1px solid var(--borde);
+}
+
+.leyenda .l-libre::before {
+  background: var(--libre);
+}
+
+.leyenda .l-elegido::before {
+  background: var(--elegido);
+}
+
+.leyenda .l-ocupado::before {
+  background: var(--ocupado);
+}
+
+.cuenta {
+  font-size: 2rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.resultado {
+  font-size: 1.6rem;
+  font-weight: 800;
+  text-align: center;
+  padding: 24px 12px;
+  border-radius: 10px;
+  color: #fff;
+}
+
+.resultado.VALIDA {
+  background: var(--ok);
+}
+
+.resultado.YA_USADA,
+.resultado.OTRO_EVENTO {
+  background: var(--aviso);
+}
+
+.resultado.INVALIDA {
+  background: var(--error);
+}
