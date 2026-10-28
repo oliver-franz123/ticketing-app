@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { api, ErrorApi } from '../../../lib/api';
 import { formatearMonto } from '../../../lib/formato';
+import { IconoAlerta, IconoCheck, IconoReloj } from '../../iconos';
 import { useSesion } from '../../../lib/sesion';
 
 type Orden = {
@@ -17,6 +18,7 @@ type Orden = {
 };
 
 const REFRESCO_MS = 3000;
+const AVISO_MS = 60_000; // desde aquí la cuenta regresiva se marca como urgente
 
 export default function PaginaOrden() {
   const { id } = useParams<{ id: string }>();
@@ -69,9 +71,12 @@ export default function PaginaOrden() {
 
   if (sesion === null) {
     return (
-      <p className="mensaje aviso">
-        Tu sesión terminó. <Link href="/login">Ingresa</Link> para ver tu orden.
-      </p>
+      <div className="pagina-orden">
+        <h1>Tu orden</h1>
+        <p className="mensaje aviso">
+          Tu sesión terminó. <Link href="/login">Ingresa</Link> para ver tu orden.
+        </p>
+      </div>
     );
   }
 
@@ -80,53 +85,111 @@ export default function PaginaOrden() {
   const segundos = Math.floor((restante % 60000) / 1000);
   const vencida = orden?.estado === 'EXPIRADA' || (orden?.estado === 'PENDIENTE_PAGO' && restante === 0);
 
+  const urgente = restante > 0 && restante <= AVISO_MS;
+
   return (
-    <>
+    <div className="pagina-orden">
       <h1>Tu orden</h1>
-      {error && <p className="mensaje error">{error}</p>}
-      {!orden && !error && <p className="suave">Cargando…</p>}
-      {orden && (
-        <div className="tarjeta">
-          <p>
-            Asientos: <strong>{orden.asientos.map((a) => `${a.fila}${a.columna}`).join(', ')}</strong>
-          </p>
-          <p>
-            Total: <strong>{formatearMonto(orden.totalCentavos)}</strong>
-          </p>
-          <p className="suave">Orden {orden.ordenId}</p>
+      {error && (
+        <div className="mensaje error" role="alert">
+          {error}{' '}
+          <button type="button" className="enlace" onClick={cargar}>
+            Reintentar
+          </button>
+        </div>
+      )}
+      {!orden && !error && (
+        <div className="tarjeta" aria-busy="true">
+          <span className="solo-lectores">Cargando tu orden…</span>
+          <div className="esqueleto" style={{ height: '1.2em', width: '40%', margin: '0 auto var(--e-4)' }} />
+          <div className="esqueleto" style={{ height: '4rem', width: '60%', margin: '0 auto var(--e-4)' }} />
+          <div className="esqueleto" style={{ height: 44 }} />
         </div>
       )}
 
       {orden?.estado === 'PENDIENTE_PAGO' && !vencida && (
-        <div className="tarjeta">
-          <p>Tus asientos están reservados por:</p>
-          <p className="cuenta" aria-live="polite">
+        <section className={`tarjeta estado-orden${urgente ? ' urgente' : ''}`}>
+          <p className="estado-titulo">Tus asientos están reservados por</p>
+          <p className="cuenta" role="timer" aria-label={`Quedan ${minutos} minutos y ${segundos} segundos`}>
             {minutos}:{String(segundos).padStart(2, '0')}
           </p>
-          <button className="boton" onClick={pagar} disabled={pagando}>
-            {pagando ? 'Abriendo el pago…' : 'Pagar'}
+          {urgente && (
+            <p className="mensaje aviso" role="alert">
+              <strong>Quedan menos de 60 segundos.</strong> Paga ahora o tus asientos se liberarán.
+            </p>
+          )}
+          <button className="boton ancho grande" onClick={pagar} disabled={pagando}>
+            {pagando ? 'Abriendo el pago…' : `Pagar ${formatearMonto(orden.totalCentavos)}`}
           </button>
           <p className="suave">
             Si ya pagaste, espera aquí: la página se actualiza sola cuando el pago se confirma.
           </p>
-        </div>
+        </section>
       )}
 
       {vencida && (
-        <p className="mensaje aviso">
-          La reserva venció y los asientos se liberaron. <Link href={`/eventos/${orden!.eventoId}`}>Elegir de nuevo</Link>
-        </p>
+        <section className="tarjeta estado-orden aviso">
+          <span className="estado-icono">
+            <IconoReloj />
+          </span>
+          <h2>Tu reserva venció</h2>
+          <p>Pasaron los 5 minutos sin un pago confirmado y los asientos se liberaron para otras personas.</p>
+          <Link className="boton" href={`/eventos/${orden!.eventoId}`}>
+            Elegir asientos de nuevo
+          </Link>
+        </section>
       )}
 
       {orden?.estado === 'PAGADA' && (
-        <p className="mensaje ok">
-          <strong>¡Pago confirmado!</strong> Revisa tu correo: te enviamos tus entradas en PDF con el código QR.
-        </p>
+        <section className="tarjeta estado-orden ok" role="status">
+          <span className="estado-icono">
+            <IconoCheck />
+          </span>
+          <h2>¡Pago confirmado!</h2>
+          <p>
+            <strong>Revisa tu correo:</strong> te enviamos tus entradas en PDF, con un código QR por asiento. Si no lo
+            ves en unos minutos, mira la carpeta de spam.
+          </p>
+        </section>
       )}
 
-      {orden && !['PENDIENTE_PAGO', 'PAGADA', 'EXPIRADA'].includes(orden.estado) && (
+      {orden?.estado === 'REEMBOLSO_REQUERIDO' && (
+        <section className="tarjeta estado-orden error" role="status">
+          <span className="estado-icono">
+            <IconoAlerta />
+          </span>
+          <h2>Tu pago llegó tarde</h2>
+          <p>
+            El pago se confirmó cuando tu reserva ya había vencido y otra persona tomó esos asientos. No se emitieron
+            entradas y tu orden quedó registrada para el reembolso.
+          </p>
+        </section>
+      )}
+
+      {orden && !['PENDIENTE_PAGO', 'PAGADA', 'EXPIRADA', 'REEMBOLSO_REQUERIDO'].includes(orden.estado) && (
         <p className="mensaje aviso">Estado de la orden: {orden.estado}. Si tienes dudas, contáctanos.</p>
       )}
-    </>
+
+      {orden && (
+        <section className="tarjeta detalle-orden">
+          <h2>Detalle</h2>
+          <dl>
+            <dt>Asientos</dt>
+            <dd>
+              <ul className="zonas">
+                {orden.asientos.map((a) => (
+                  <li key={a.id}>
+                    Fila {a.fila} · <strong>{a.columna}</strong>
+                  </li>
+                ))}
+              </ul>
+            </dd>
+            <dt>Total</dt>
+            <dd className="detalle-total">{formatearMonto(orden.totalCentavos)}</dd>
+          </dl>
+          <p className="suave referencia">Orden {orden.ordenId}</p>
+        </section>
+      )}
+    </div>
   );
 }

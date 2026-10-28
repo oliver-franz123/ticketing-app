@@ -1,6 +1,6 @@
-# Entradas: venta de entradas con asientos numerados
+# YaKache: venta de entradas con asientos numerados
 
-Proyecto de **Sistemas Distribuidos**. Sistema de venta de entradas para Bolivia (lanzamiento en Cochabamba) centrado en **alta concurrencia sin sobreventa**: nunca dos compras del mismo asiento.
+Proyecto de **Sistemas Distribuidos**. **YaKache** es un sistema de venta de entradas para Bolivia (lanzamiento en Cochabamba) centrado en **alta concurrencia sin sobreventa**: nunca dos compras del mismo asiento.
 
 La documentación de diseño está en [`docs/`](docs/) (empezar por [`docs/00-resumen.md`](docs/00-resumen.md)) y las decisiones en [`docs/adr/`](docs/adr/).
 
@@ -35,6 +35,8 @@ npm run claves:qr -w @entradas/worker   # → pegar las dos líneas QR_SIGNING_P
 ```
 
 > Cada variable tiene que aparecer **una sola vez** en `.env`. Las semillas no cambian la contraseña de un usuario que ya existe: si cambias `SEED_PASSWORD` después de sembrar, empieza con la base vacía (ver *Problemas comunes*).
+
+> Si tu `.env` es anterior a YaKache, agrega `WEB_PUBLIC_URL=http://localhost:3001`: el simulador de pagos la usa para el enlace **Volver a YaKache** (sin ella, el enlace no aparece).
 
 ```bash
 # 3. Infraestructura: Postgres 16, Redis 7 y Mailpit
@@ -108,7 +110,7 @@ Opciones: `--n 100`, `--recinto-id <uuid>`, `--email-organizador`, `--password`.
 
 1. En <http://localhost:3001>, registrarse como comprador, entrar al evento "Carrera …" de la escena 1 (o a cualquier otro), elegir un asiento libre y **Reservar**.
 2. En la página de la orden (cuenta regresiva de 5 minutos), **Pagar** abre el simulador de pagos.
-3. Elegir el modo **DUPLICAR** con 5 copias y **Confirmar**. Volver con el botón Atrás: la orden pasa a **PAGADA** sola (polling cada 3 s).
+3. Abrir **Opciones de la demo**, elegir **Aviso repetido** (modo `DUPLICAR`) con 5 copias y tocar **Pagar Bs X**. Volver con **Volver a YaKache** (o el botón Atrás): la orden pasa a **PAGADA** sola (polling cada 3 s).
 4. En el log de la API se ven 5 webhooks con el mismo `evento_externo_id`: uno `PAGADA` y cuatro `DUPLICADO`.
 5. En SQL (reemplazar `<ordenId>`, que aparece en la página de la orden):
 
@@ -123,7 +125,7 @@ Qué explicar: `UNIQUE(proveedor, evento_externo_id)` en `webhook_eventos`. El p
 ### Escena 3: Worker apagado → la API sigue vendiendo
 
 1. **Ctrl+C en la terminal del Worker.**
-2. Hacer 2 o 3 compras completas desde la web (modo **OK** en el simulador). Todas llegan a **PAGADA**: la venta no depende del Worker.
+2. Hacer 2 o 3 compras completas desde la web (en el simulador basta con **Pagar Bs X**: el modo OK viene marcado). Todas llegan a **PAGADA**: la venta no depende del Worker.
 3. Mostrar el trabajo acumulado y que Mailpit no recibió nada nuevo:
 
 ```sql

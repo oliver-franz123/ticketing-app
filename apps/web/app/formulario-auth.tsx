@@ -30,41 +30,67 @@ export function FormularioAuth({ modo }: { modo: 'login' | 'registro' }) {
   }
 
   return (
-    <>
-      <h1>{modo === 'login' ? 'Ingresar' : 'Crear cuenta'}</h1>
-      <form className="pila tarjeta" onSubmit={enviar}>
-        {modo === 'registro' && (
+    <div className="pagina-auth">
+      <div className="tarjeta">
+        <h1>{modo === 'login' ? 'Ingresar' : 'Crear cuenta'}</h1>
+        <p className="suave">
+          {modo === 'login'
+            ? 'Ingresa con tu correo para reservar y pagar tus entradas.'
+            : 'Solo pedimos lo necesario para enviarte tus entradas.'}
+        </p>
+        <form className="pila" onSubmit={enviar}>
+          {modo === 'registro' && (
+            <label>
+              Nombre
+              <input name="nombre" required maxLength={100} autoComplete="name" />
+            </label>
+          )}
           <label>
-            Nombre
-            <input name="nombre" required maxLength={100} autoComplete="name" />
+            Correo electrónico
+            <input name="email" type="email" required autoComplete="email" inputMode="email" />
           </label>
-        )}
-        <label>
-          Correo electrónico
-          <input name="email" type="email" required autoComplete="email" inputMode="email" />
-        </label>
-        <label>
-          Contraseña
-          <input
-            name="password"
-            type="password"
-            required
-            minLength={modo === 'registro' ? 8 : undefined}
-            autoComplete={modo === 'login' ? 'current-password' : 'new-password'}
-          />
-        </label>
-        {modo === 'registro' && (
           <label>
-            Teléfono (opcional)
-            <input name="telefono" type="tel" placeholder="+59170000000" pattern="\+591[0-9]{8}" />
+            Contraseña
+            <input
+              name="password"
+              type="password"
+              required
+              minLength={modo === 'registro' ? 8 : undefined}
+              autoComplete={modo === 'login' ? 'current-password' : 'new-password'}
+              aria-describedby={modo === 'registro' ? 'ayuda-password' : undefined}
+            />
+            {modo === 'registro' && (
+              <span id="ayuda-password" className="ayuda-campo">
+                Mínimo 8 caracteres.
+              </span>
+            )}
           </label>
-        )}
-        {error && <p className="mensaje error">{error}</p>}
-        <button className="boton" disabled={enviando}>
-          {enviando ? 'Enviando…' : modo === 'login' ? 'Ingresar' : 'Crear cuenta'}
-        </button>
-      </form>
-      <p className="suave">
+          {modo === 'registro' && (
+            <label>
+              Teléfono (opcional)
+              <input
+                name="telefono"
+                type="tel"
+                placeholder="+59170000000"
+                pattern="\+591[0-9]{8}"
+                aria-describedby="ayuda-telefono"
+              />
+              <span id="ayuda-telefono" className="ayuda-campo">
+                Con el prefijo +591 y 8 dígitos.
+              </span>
+            </label>
+          )}
+          {error && (
+            <p className="mensaje error" role="alert">
+              {error}
+            </p>
+          )}
+          <button className="boton ancho" disabled={enviando}>
+            {enviando ? 'Enviando…' : modo === 'login' ? 'Ingresar' : 'Crear cuenta'}
+          </button>
+        </form>
+      </div>
+      <p className="pie-auth">
         {modo === 'login' ? (
           <>
             ¿No tienes cuenta? <Link href="/registro">Crea una</Link>
@@ -75,6 +101,6 @@ export function FormularioAuth({ modo }: { modo: 'login' | 'registro' }) {
           </>
         )}
       </p>
-    </>
+    </div>
   );
 }

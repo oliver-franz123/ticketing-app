@@ -1,9 +1,10 @@
 'use client';
 
-import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ErrorApi } from '../lib/api';
-import { CIUDADES, formatearFecha } from '../lib/formato';
+import { CIUDADES } from '../lib/formato';
+import { IconoFlecha, IconoLupa, IconoUbicacion } from './iconos';
+import { TarjetaEvento, TarjetaEventoCargando } from './tarjeta-evento';
 
 export type EventoListado = {
   id: string;
@@ -46,27 +47,123 @@ export function SelectorCiudad({ valor, cambiar }: { valor: string; cambiar: (sl
   );
 }
 
+// Sin tildes ni mayúsculas: "concierto" encuentra "Concierto Ñandú".
+const normalizar = (texto: string) =>
+  texto
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase();
+
 export function ListaEventos() {
   const [ciudad, setCiudad] = useState('cochabamba');
+  const [texto, setTexto] = useState('');
   const { eventos, error } = useEventos(ciudad);
+  const resultados = useRef<HTMLHeadingElement>(null);
+  const nombreCiudad = CIUDADES.find((c) => c.slug === ciudad)?.nombre ?? ciudad;
+
+  // La API no tiene búsqueda: el texto filtra por título la lista ya cargada.
+  const filtro = normalizar(texto.trim());
+  const visibles = useMemo(
+    () => (filtro ? eventos?.filter((e) => normalizar(e.titulo).includes(filtro)) : eventos),
+    [eventos, filtro],
+  );
+
+  function buscar(e: FormEvent) {
+    e.preventDefault();
+    resultados.current?.focus();
+  }
 
   return (
     <>
-      <h1>Eventos</h1>
-      <div className="tarjeta">
-        <SelectorCiudad valor={ciudad} cambiar={setCiudad} />
-      </div>
-      {error && <p className="mensaje error">{error}</p>}
-      {!eventos && !error && <p className="suave">Cargando…</p>}
-      {eventos?.length === 0 && <p className="suave">No hay eventos a la venta en esta ciudad.</p>}
-      {eventos?.map((e) => (
-        <Link key={e.id} href={`/eventos/${e.id}`} className="tarjeta" style={{ display: 'block' }}>
-          <strong>{e.titulo}</strong>
-          <div className="suave">
-            {formatearFecha(e.inicio)} · {e.recinto.nombre}, {e.ciudad.nombre}
+      <section className="hero">
+        <div className="hero-mancha uno" aria-hidden="true" />
+        <div className="hero-mancha dos" aria-hidden="true" />
+        <div className="hero-interior">
+          <h1>
+            Tus entradas,
+            <br />
+            sin filas ni sobreventa
+          </h1>
+          <p>Conciertos, teatro y más en Cochabamba. Elige tu asiento y págalo en minutos.</p>
+          <form className="buscador" role="search" onSubmit={buscar}>
+            <label className="buscador-texto">
+              <span className="solo-lectores">Buscar evento por nombre</span>
+              <input
+                type="search"
+                value={texto}
+                onChange={(e) => setTexto(e.target.value)}
+                placeholder="Busca un evento por su nombre"
+                autoComplete="off"
+              />
+            </label>
+            <label className="buscador-ciudad">
+              <IconoUbicacion />
+              <span className="solo-lectores">Ciudad</span>
+              <select value={ciudad} onChange={(e) => setCiudad(e.target.value)}>
+                {CIUDADES.map((c) => (
+                  <option key={c.slug} value={c.slug}>
+                    {c.nombre}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button className="boton">
+              Buscar
+              <IconoLupa />
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <section className="seccion-eventos" aria-busy={!eventos && !error}>
+        <div className="seccion-cabecera">
+          <h2 ref={resultados} tabIndex={-1}>
+            Eventos populares en {nombreCiudad}
+          </h2>
+          {filtro && (
+            <button type="button" className="enlace-acento" onClick={() => setTexto('')}>
+              Ver todos en {nombreCiudad}
+              <IconoFlecha />
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <div className="mensaje error" role="alert">
+            {error}{' '}
+            <button type="button" className="enlace" onClick={() => window.location.reload()}>
+              Reintentar
+            </button>
           </div>
-        </Link>
-      ))}
+        )}
+        {!eventos && !error && (
+          <div className="rejilla-eventos">
+            <span className="solo-lectores">Cargando eventos…</span>
+            {Array.from({ length: 8 }, (_, i) => (
+              <TarjetaEventoCargando key={i} />
+            ))}
+          </div>
+        )}
+        {eventos?.length === 0 && (
+          <p className="vacio">
+            <strong>No hay eventos a la venta en {nombreCiudad}</strong>
+            Prueba con otra ciudad de la lista.
+          </p>
+        )}
+        {eventos && eventos.length > 0 && visibles?.length === 0 && (
+          <p className="vacio">
+            <strong>Ningún evento coincide con «{texto.trim()}»</strong>
+            Revisa cómo lo escribiste o mira todos los eventos de {nombreCiudad}.
+          </p>
+        )}
+        {visibles && visibles.length > 0 && (
+          <div className="rejilla-eventos">
+            {visibles.map((e) => (
+              <TarjetaEvento key={e.id} evento={e} />
+            ))}
+          </div>
+        )}
+      </section>
     </>
   );
 }

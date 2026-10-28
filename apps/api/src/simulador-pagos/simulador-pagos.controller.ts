@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Header, HttpCode, NotFoundException, Param, Post, Res } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Publico } from '../auth/decoradores';
 import { ConfirmarPagoSimuladorDto } from './dto/confirmar-pago-simulador.dto';
 import { CrearPagoSimuladorDto } from './dto/crear-pago-simulador.dto';
@@ -21,7 +22,18 @@ type RespuestaHttp = { status(codigo: number): unknown };
 // bits. El módulo ni siquiera existe sin SIMULADOR_HABILITADO=true.
 @Controller('simulador')
 export class SimuladorPagosController {
-  constructor(private readonly simulador: SimuladorPagosService) {}
+  constructor(
+    private readonly simulador: SimuladorPagosService,
+    private readonly config: ConfigService,
+  ) {}
+
+  // Enlace "Volver a YaKache" a la orden en la web. Sin WEB_PUBLIC_URL no hay
+  // enlace (la página lo oculta).
+  private volver(ordenId?: string) {
+    const web = this.config.get<string>('WEB_PUBLIC_URL')?.replace(/\/+$/, '');
+    if (!web) return undefined;
+    return ordenId ? `${web}/ordenes/${encodeURIComponent(ordenId)}` : web;
+  }
 
   // "API del proveedor": la llama SimuladorAdapter.crearIntento por HTTP. Un
   // proveedor real pediría una API key; aquí no hace falta, porque un intento
@@ -42,7 +54,8 @@ export class SimuladorPagosController {
   async pagina(@Param('referencia') referencia: string) {
     const pago = REFERENCIA.test(referencia) ? await this.simulador.buscar(referencia) : null;
     if (!pago) throw noEncontrado();
-    return pago.estado === 'PENDIENTE' ? paginaDePago(pago) : paginaYaProcesado();
+    const volver = this.volver(pago.ordenId);
+    return pago.estado === 'PENDIENTE' ? paginaDePago(pago, volver) : paginaYaProcesado(volver);
   }
 
   // Confirma el modo elegido. 200 con la página "enviado" (el webhook sale en
@@ -61,10 +74,12 @@ export class SimuladorPagosController {
     if (!REFERENCIA.test(referencia)) throw noEncontrado();
     const resultado = await this.simulador.confirmar(referencia, datos);
     if (resultado === 'NO_EXISTE') throw noEncontrado();
+    // Solo para el enlace de vuelta: la confirmación ya quedó hecha arriba.
+    const volver = this.volver((await this.simulador.buscar(referencia))?.ordenId);
     if (resultado === 'YA_PROCESADO') {
       respuesta.status(409);
-      return paginaYaProcesado();
+      return paginaYaProcesado(volver);
     }
-    return paginaEnviado(datos.modo);
+    return paginaEnviado(datos.modo, volver);
   }
 }
