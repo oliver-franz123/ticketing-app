@@ -234,7 +234,7 @@ footer.pie {
   margin-bottom: var(--e-3);
 }
 
-.tarjeta a {
+.tarjeta a:not(.boton) {
   color: inherit;
 }
 
@@ -878,12 +878,124 @@ button.asiento.libre:hover {
   }
 }
 
-/* ---------- Orden (se rediseña en su propio commit) ---------- */
+/* ---------- Orden ---------- */
+
+.pagina-orden {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.estado-orden {
+  text-align: center;
+  padding: var(--e-6) var(--e-5);
+}
+
+.estado-orden h2 {
+  font-size: var(--t-xl);
+  margin: var(--e-2) 0;
+}
+
+.estado-orden p {
+  margin: 0 0 var(--e-4);
+}
+
+.estado-orden .mensaje {
+  text-align: left;
+}
+
+.estado-titulo {
+  font-weight: 500;
+}
 
 .cuenta {
-  font-size: var(--t-2xl);
+  font-size: var(--t-cuenta);
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.estado-orden.urgente {
+  border: 2px solid var(--c-aviso-borde);
+  background: var(--c-aviso-fondo);
+}
+
+.estado-orden.urgente .cuenta {
+  color: var(--c-aviso-texto);
+}
+
+.boton.grande {
+  min-height: 56px;
+  font-size: var(--t-lg);
+}
+
+.estado-icono {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-full);
+  font-size: 28px;
+}
+
+.estado-orden.ok {
+  border-top: 4px solid var(--c-ok);
+}
+
+.estado-orden.ok .estado-icono {
+  background: var(--c-ok-fondo);
+  color: var(--c-ok-texto);
+}
+
+.estado-orden.aviso {
+  border-top: 4px solid var(--c-aviso-borde);
+}
+
+.estado-orden.aviso .estado-icono {
+  background: var(--c-aviso-fondo);
+  color: var(--c-aviso-texto);
+}
+
+.estado-orden.error {
+  border-top: 4px solid var(--c-error);
+}
+
+.estado-orden.error .estado-icono {
+  background: var(--c-error-fondo);
+  color: var(--c-error);
+}
+
+.detalle-orden dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--e-3) var(--e-4);
+  align-items: center;
+  margin: 0 0 var(--e-4);
+}
+
+.detalle-orden dt {
+  color: var(--c-suave);
+  font-size: var(--t-sm);
+}
+
+.detalle-orden dd {
+  margin: 0;
+}
+
+.detalle-orden .zonas {
+  margin: 0;
+}
+
+.detalle-total {
+  font-size: var(--t-lg);
   font-weight: 700;
+}
+
+.referencia {
+  margin: 0;
+  font-size: var(--t-xs);
+  word-break: break-all;
 }
 
 /* ---------- Validador (se rediseña en su propio commit) ---------- */
