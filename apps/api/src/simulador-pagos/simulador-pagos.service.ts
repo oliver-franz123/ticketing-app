@@ -100,11 +100,12 @@ export class SimuladorPagosService implements OnModuleInit, OnModuleDestroy {
     return { referencia, redirectUrl: `${this.urlPublica()}/simulador/pagar/${encodeURIComponent(referencia)}` };
   }
 
-  // Lo que muestra la página. findUnique es correcto: referencia es la PK.
+  // Lo que muestra la página (ordenId, para el enlace de vuelta a la web).
+  // findUnique es correcto: referencia es la PK.
   buscar(referencia: string) {
     return this.prisma.simuladorPago.findUnique({
       where: { referencia },
-      select: { referencia: true, montoCentavos: true, estado: true },
+      select: { referencia: true, ordenId: true, montoCentavos: true, estado: true },
     });
   }
 
