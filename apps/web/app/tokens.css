@@ -1,0 +1,87 @@
+/* Tokens de diseño de YaKache: el único lugar con colores, tipografía,
+   espaciado, radios y sombras. El resto del CSS solo usa var(--…).
+   Contrastes medidos con la fórmula WCAG 2.x (texto normal ≥ 4,5). */
+:root {
+  /* Acento. Blanco sobre --c-acento-vivo da 4,54 (demasiado justo): los
+     botones usan --c-acento (5,10); el vivo queda para el wordmark sobre negro (4,62). */
+  --c-acento-vivo: #e8114f;
+  --c-acento: #d90f49;
+  --c-acento-hover: #b80d3e;
+  --c-sobre-acento: #ffffff;
+
+  /* Oscuros: cabecera, pie y hero. */
+  --c-negro: #000000;
+  --c-hero-base: #2a1a16;
+  --c-hero-mancha-1: #e8114f;
+  --c-hero-mancha-2: #7a2a12;
+  --c-sobre-oscuro: #ffffff;
+  --c-suave-oscuro: #a3a3a3; /* sobre negro: 8,33 */
+
+  /* Neutros. */
+  --c-blanco: #ffffff;
+  --c-texto: #1a1a1a;
+  --c-suave: #4a4a4a; /* sobre blanco: 8,86 */
+  --c-gris-boton: #333333;
+  --c-borde: #e5e5e5;
+  --c-borde-fuerte: #a3a3a3;
+  --c-fondo-alt: #f5f5f5;
+
+  /* Estados de asiento. */
+  --c-reservado: #fff4e0;
+  --c-reservado-borde: #b45309;
+  --c-reservado-texto: #78350f; /* sobre --c-reservado: 8,32 */
+  --c-vendido: #d4d4d4;
+  --c-vendido-texto: #4a4a4a; /* sobre --c-vendido: 5,98 */
+
+  /* Mensajes. */
+  --c-ok: #15803d;
+  --c-ok-fondo: #e8f5ec;
+  --c-ok-texto: #166534; /* sobre --c-ok-fondo: 6,35 */
+  --c-error: #b42318;
+  --c-error-fondo: #fdecea; /* --c-error sobre él: 5,75 */
+  --c-aviso-fondo: #fff4e0;
+  --c-aviso-texto: #78350f;
+  --c-aviso-borde: #b45309;
+
+  /* Tipografía. --fuente-poppins la define next/font/local en layout.tsx. */
+  --fuente: var(--fuente-poppins), system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --fuente-mono: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --t-xs: 0.8rem;
+  --t-sm: 0.9rem;
+  --t-base: 1rem;
+  --t-lg: 1.15rem;
+  --t-xl: 1.5rem;
+  --t-2xl: 2rem;
+  --t-hero: clamp(1.9rem, 5vw, 3rem);
+  --t-cuenta: clamp(3rem, 14vw, 4.5rem);
+
+  /* Espaciado (múltiplos de 4 px). */
+  --e-1: 4px;
+  --e-2: 8px;
+  --e-3: 12px;
+  --e-4: 16px;
+  --e-5: 20px;
+  --e-6: 24px;
+  --e-7: 32px;
+  --e-8: 48px;
+  --e-9: 64px;
+
+  /* Radios: la referencia usa esquinas de ~8 px en tarjetas y buscador. */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-full: 999px;
+
+  /* Sombras. El foco es un anillo doble: se ve sobre fondo claro y oscuro. */
+  --sombra-1: 0 2px 8px rgb(0 0 0 / 0.08);
+  --sombra-2: 0 6px 20px rgb(0 0 0 / 0.14);
+  --sombra-barra: 0 -4px 16px rgb(0 0 0 / 0.1);
+  --foco: 0 0 0 3px var(--c-blanco), 0 0 0 5px var(--c-acento);
+
+  /* Medidas. */
+  --toque-min: 40px;
+  --ancho-max: 1200px;
+  --ancho-form: 420px;
+
+  color-scheme: light;
+}

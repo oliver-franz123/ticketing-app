@@ -1,73 +1,207 @@
-/* Estilos mínimos, sin librerías: la web tiene que cargar rápido en redes móviles. */
-:root {
-  --fondo: #f7f7f5;
-  --texto: #1d1d1b;
-  --suave: #6b6b66;
-  --borde: #d9d9d4;
-  --tarjeta: #ffffff;
-  --primario: #0b6e4f;
-  --primario-texto: #ffffff;
-  --libre: #e3f4ec;
-  --elegido: #0b6e4f;
-  --ocupado: #c9c9c4;
-  --ok: #0b6e4f;
-  --aviso: #a15c00;
-  --error: #b42318;
-  color-scheme: light;
-}
+/* Estilos de YaKache, sin librerías: la web tiene que cargar rápido en redes
+   móviles. Mobile-first (640 px tableta, 1024 px escritorio). Los valores
+   salen de tokens.css. */
+@import './tokens.css';
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  background: var(--fondo);
-  color: var(--texto);
-  line-height: 1.45;
-}
-
-header.barra {
+  min-height: 100vh;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  align-items: center;
-  padding: 12px 16px;
-  background: var(--tarjeta);
-  border-bottom: 1px solid var(--borde);
+  flex-direction: column;
+  font-family: var(--fuente);
+  font-size: var(--t-base);
+  background: var(--c-blanco);
+  color: var(--c-texto);
+  line-height: 1.5;
+  /* El hero sale a todo el ancho con 100vw: sin esto aparece scroll horizontal. */
+  overflow-x: clip;
 }
 
-header.barra .marca {
+h1,
+h2,
+h3 {
+  line-height: 1.2;
   font-weight: 700;
-  margin-right: auto;
-  color: var(--texto);
-  text-decoration: none;
-}
-
-header.barra a,
-header.barra button.enlace {
-  color: var(--primario);
-  font-size: 0.95rem;
-}
-
-main {
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 16px;
 }
 
 h1 {
-  font-size: 1.4rem;
-  margin: 8px 0 16px;
+  font-size: var(--t-xl);
+  font-weight: 800;
+  margin: var(--e-6) 0 var(--e-4);
 }
 
+h2 {
+  font-size: var(--t-lg);
+  margin: 0 0 var(--e-3);
+}
+
+a {
+  color: var(--c-acento);
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--foco);
+  border-radius: var(--r-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- Barra de navegación ---------- */
+
+header.barra {
+  background: var(--c-negro);
+  color: var(--c-sobre-oscuro);
+}
+
+.barra-interior {
+  max-width: var(--ancho-max);
+  margin: 0 auto;
+  padding: var(--e-2) var(--e-4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--e-1) var(--e-2);
+  min-height: 60px;
+}
+
+.marca {
+  margin-right: auto;
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--c-acento-vivo);
+  text-decoration: none;
+  line-height: 1;
+}
+
+.marca strong {
+  font-weight: 800;
+}
+
+.barra a.enlace-barra,
+.barra button.enlace-barra {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--toque-min);
+  padding: 0 var(--e-2);
+  color: var(--c-sobre-oscuro);
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  text-decoration: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.barra a.enlace-barra:hover,
+.barra button.enlace-barra:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+/* ---------- Contenido y pie ---------- */
+
+main {
+  flex: 1;
+  width: 100%;
+  max-width: var(--ancho-max);
+  margin: 0 auto;
+  padding: 0 var(--e-4) var(--e-8);
+}
+
+footer.pie {
+  background: var(--c-negro);
+  color: var(--c-suave-oscuro);
+  font-size: var(--t-sm);
+}
+
+.pie-interior {
+  max-width: var(--ancho-max);
+  margin: 0 auto;
+  padding: var(--e-7) var(--e-4) var(--e-6);
+}
+
+.pie .marca {
+  font-size: 1.4rem;
+}
+
+.pie-lema {
+  margin: var(--e-2) 0 var(--e-6);
+}
+
+.pie h2 {
+  color: var(--c-sobre-oscuro);
+  font-size: var(--t-base);
+  scroll-margin-top: var(--e-4);
+}
+
+.ayuda {
+  display: grid;
+  gap: var(--e-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ayuda strong {
+  display: block;
+  color: var(--c-sobre-oscuro);
+  font-weight: 600;
+  margin-bottom: var(--e-1);
+}
+
+.ayuda p {
+  margin: 0;
+}
+
+.pie-final {
+  margin-top: var(--e-7);
+  padding-top: var(--e-4);
+  border-top: 1px solid var(--c-gris-boton);
+  text-align: center;
+  font-size: var(--t-xs);
+}
+
+@media (min-width: 640px) {
+  .ayuda {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--e-5) var(--e-7);
+  }
+}
+
+@media (min-width: 1024px) {
+  .ayuda {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* ---------- Componentes ---------- */
+
 .tarjeta {
-  background: var(--tarjeta);
-  border: 1px solid var(--borde);
-  border-radius: 10px;
-  padding: 16px;
-  margin-bottom: 12px;
+  background: var(--c-blanco);
+  border: 1px solid var(--c-borde);
+  border-radius: var(--r-md);
+  box-shadow: var(--sombra-1);
+  padding: var(--e-5);
+  margin-bottom: var(--e-3);
 }
 
 .tarjeta a {
@@ -75,36 +209,48 @@ h1 {
 }
 
 .suave {
-  color: var(--suave);
-  font-size: 0.9rem;
+  color: var(--c-suave);
+  font-size: var(--t-sm);
 }
 
 form.pila {
   display: grid;
-  gap: 12px;
+  gap: var(--e-4);
 }
 
 label {
   display: grid;
-  gap: 4px;
-  font-size: 0.95rem;
+  gap: var(--e-1);
+  font-size: var(--t-sm);
+  font-weight: 500;
 }
 
 input,
 select,
 textarea {
   font: inherit;
-  padding: 10px 12px;
-  border: 1px solid var(--borde);
-  border-radius: 8px;
-  background: #fff;
+  font-weight: 400;
+  font-size: var(--t-base);
+  color: var(--c-texto);
+  min-height: 44px;
+  padding: var(--e-2) var(--e-3);
+  border: 1px solid var(--c-borde-fuerte);
+  border-radius: var(--r-md);
+  background: var(--c-blanco);
   width: 100%;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--c-acento);
+  border-radius: var(--r-md);
 }
 
 textarea {
   min-height: 120px;
-  font-family: ui-monospace, monospace;
-  font-size: 0.85rem;
+  font-family: var(--fuente-mono);
+  font-size: var(--t-sm);
 }
 
 button {
@@ -113,101 +259,180 @@ button {
 }
 
 .boton {
-  display: inline-block;
-  padding: 12px 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--e-2);
+  min-height: 44px;
+  padding: var(--e-2) var(--e-5);
   border: 0;
-  border-radius: 8px;
-  background: var(--primario);
-  color: var(--primario-texto);
+  border-radius: var(--r-md);
+  background: var(--c-acento);
+  color: var(--c-sobre-acento);
   font-weight: 600;
   text-align: center;
   text-decoration: none;
-  min-height: 44px;
+  transition: background-color 0.15s;
+}
+
+.boton:hover:not(:disabled) {
+  background: var(--c-acento-hover);
+}
+
+.boton:focus-visible {
+  border-radius: var(--r-md);
 }
 
 .boton:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
   cursor: not-allowed;
+}
+
+.boton.secundario {
+  background: var(--c-gris-boton);
+}
+
+.boton.secundario:hover:not(:disabled) {
+  background: var(--c-negro);
+}
+
+.boton.ancho {
+  width: 100%;
 }
 
 button.enlace {
   background: none;
   border: 0;
   padding: 0;
+  color: var(--c-acento);
   text-decoration: underline;
 }
 
+.icono {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+
 .mensaje {
-  padding: 12px;
-  border-radius: 8px;
-  margin: 12px 0;
+  padding: var(--e-3) var(--e-4);
+  border-radius: var(--r-md);
+  border-left: 4px solid;
+  margin: var(--e-3) 0;
 }
 
 .mensaje.error {
-  background: #fdecea;
-  color: var(--error);
+  background: var(--c-error-fondo);
+  border-color: var(--c-error);
+  color: var(--c-error);
 }
 
 .mensaje.ok {
-  background: var(--libre);
-  color: var(--ok);
+  background: var(--c-ok-fondo);
+  border-color: var(--c-ok);
+  color: var(--c-ok-texto);
 }
 
 .mensaje.aviso {
-  background: #fff4e0;
-  color: var(--aviso);
+  background: var(--c-aviso-fondo);
+  border-color: var(--c-aviso-borde);
+  color: var(--c-aviso-texto);
 }
 
-/* Mapa de asientos: rejilla con tantas columnas como la fila más larga. */
+.mensaje a {
+  color: inherit;
+  font-weight: 600;
+}
+
+/* Bloque de carga: rectángulo gris con un brillo que pasa. */
+.esqueleto {
+  background: linear-gradient(90deg, var(--c-fondo-alt) 25%, var(--c-borde) 50%, var(--c-fondo-alt) 75%);
+  background-size: 200% 100%;
+  animation: brillo 1.2s linear infinite;
+  border-radius: var(--r-sm);
+}
+
+@keyframes brillo {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.vacio {
+  text-align: center;
+  padding: var(--e-8) var(--e-4);
+  color: var(--c-suave);
+  border: 1px dashed var(--c-borde-fuerte);
+  border-radius: var(--r-md);
+}
+
+.vacio strong {
+  display: block;
+  color: var(--c-texto);
+  font-size: var(--t-lg);
+  margin-bottom: var(--e-1);
+}
+
+.solo-lectores {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- Mapa de asientos (se rediseña en su propio commit) ---------- */
+
 .mapa {
   overflow-x: auto;
-  padding-bottom: 8px;
+  padding-bottom: var(--e-2);
 }
 
 .fila {
   display: flex;
-  gap: 4px;
+  gap: var(--e-1);
   align-items: center;
-  margin-bottom: 4px;
+  margin-bottom: var(--e-1);
 }
 
 .fila .etiqueta {
   width: 24px;
   flex: none;
-  font-size: 0.8rem;
-  color: var(--suave);
+  font-size: var(--t-xs);
+  color: var(--c-suave);
   text-align: center;
 }
 
 .asiento {
-  width: 36px;
-  height: 36px;
+  width: var(--toque-min);
+  height: var(--toque-min);
   flex: none;
-  border-radius: 6px;
-  border: 1px solid var(--borde);
-  background: var(--libre);
-  font-size: 0.75rem;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--c-borde-fuerte);
+  background: var(--c-blanco);
+  font-size: var(--t-xs);
   padding: 0;
 }
 
 .asiento.elegido {
-  background: var(--elegido);
-  color: #fff;
-  border-color: var(--elegido);
+  background: var(--c-acento);
+  color: var(--c-sobre-acento);
+  border-color: var(--c-acento);
 }
 
 .asiento:disabled {
-  background: var(--ocupado);
-  color: var(--suave);
+  background: var(--c-vendido);
+  color: var(--c-vendido-texto);
   cursor: not-allowed;
 }
 
 .leyenda {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
-  font-size: 0.85rem;
-  margin: 8px 0 16px;
+  gap: var(--e-3);
+  font-size: var(--t-sm);
+  margin: var(--e-2) 0 var(--e-4);
 }
 
 .leyenda span::before {
@@ -216,47 +441,51 @@ button.enlace {
   width: 12px;
   height: 12px;
   border-radius: 3px;
-  margin-right: 4px;
+  margin-right: var(--e-1);
   vertical-align: -1px;
-  border: 1px solid var(--borde);
+  border: 1px solid var(--c-borde-fuerte);
 }
 
 .leyenda .l-libre::before {
-  background: var(--libre);
+  background: var(--c-blanco);
 }
 
 .leyenda .l-elegido::before {
-  background: var(--elegido);
+  background: var(--c-acento);
 }
 
 .leyenda .l-ocupado::before {
-  background: var(--ocupado);
+  background: var(--c-vendido);
 }
 
+/* ---------- Orden (se rediseña en su propio commit) ---------- */
+
 .cuenta {
-  font-size: 2rem;
+  font-size: var(--t-2xl);
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
 
+/* ---------- Validador (se rediseña en su propio commit) ---------- */
+
 .resultado {
-  font-size: 1.6rem;
+  font-size: var(--t-xl);
   font-weight: 800;
   text-align: center;
-  padding: 24px 12px;
-  border-radius: 10px;
-  color: #fff;
+  padding: var(--e-6) var(--e-3);
+  border-radius: var(--r-md);
+  color: var(--c-sobre-acento);
 }
 
 .resultado.VALIDA {
-  background: var(--ok);
+  background: var(--c-ok);
 }
 
 .resultado.YA_USADA,
 .resultado.OTRO_EVENTO {
-  background: var(--aviso);
+  background: var(--c-aviso-borde);
 }
 
 .resultado.INVALIDA {
-  background: var(--error);
+  background: var(--c-error);
 }
