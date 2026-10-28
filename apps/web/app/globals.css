@@ -998,6 +998,40 @@ button.asiento.libre:hover {
   word-break: break-all;
 }
 
+/* ---------- Ingresar y crear cuenta ---------- */
+
+.pagina-auth {
+  max-width: var(--ancho-form);
+  margin: var(--e-7) auto 0;
+}
+
+.pagina-auth .tarjeta {
+  padding: var(--e-6) var(--e-5);
+}
+
+.pagina-auth h1 {
+  margin: 0 0 var(--e-1);
+}
+
+.pagina-auth .suave {
+  margin: 0 0 var(--e-5);
+}
+
+.ayuda-campo {
+  color: var(--c-suave);
+  font-size: var(--t-xs);
+  font-weight: 400;
+}
+
+.pie-auth {
+  text-align: center;
+  font-size: var(--t-sm);
+}
+
+.pie-auth a {
+  font-weight: 600;
+}
+
 /* ---------- Validador (se rediseña en su propio commit) ---------- */
 
 .resultado {
