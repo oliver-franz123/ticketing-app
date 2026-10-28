@@ -111,6 +111,36 @@ header.barra {
   cursor: pointer;
 }
 
+.barra-interior {
+  column-gap: 0;
+}
+
+.barra .marca {
+  font-size: 1.4rem;
+}
+
+.barra a.enlace-barra,
+.barra button.enlace-barra {
+  padding: 0 var(--e-1);
+  font-size: var(--t-xs);
+}
+
+@media (min-width: 640px) {
+  .barra-interior {
+    column-gap: var(--e-2);
+  }
+
+  .barra .marca {
+    font-size: 1.6rem;
+  }
+
+  .barra a.enlace-barra,
+  .barra button.enlace-barra {
+    padding: 0 var(--e-2);
+    font-size: var(--t-sm);
+  }
+}
+
 .barra a.enlace-barra:hover,
 .barra button.enlace-barra:hover {
   text-decoration: underline;
@@ -380,6 +410,271 @@ button.enlace {
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* ---------- Inicio: hero con buscador ---------- */
+
+/* Sale del ancho de <main> hasta los bordes de la ventana. */
+.hero {
+  position: relative;
+  overflow: hidden;
+  margin-inline: calc(50% - 50vw);
+  padding: var(--e-8) var(--e-4) var(--e-9);
+  background: linear-gradient(160deg, var(--c-hero-base) 0%, var(--c-negro) 100%);
+  color: var(--c-sobre-oscuro);
+  text-align: center;
+}
+
+.hero-mancha {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.hero-mancha.uno {
+  width: 420px;
+  height: 320px;
+  top: -80px;
+  left: 8%;
+  background: var(--c-hero-mancha-1);
+}
+
+.hero-mancha.dos {
+  width: 520px;
+  height: 360px;
+  bottom: -160px;
+  right: 2%;
+  background: var(--c-hero-mancha-2);
+  opacity: 0.6;
+}
+
+.hero-interior {
+  position: relative;
+  /* Mismo ancho útil que <main> (ancho máximo menos su relleno). */
+  max-width: calc(var(--ancho-max) - 2 * var(--e-4));
+  margin: 0 auto;
+}
+
+.hero h1 {
+  font-size: var(--t-hero);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--e-4);
+}
+
+.hero p {
+  margin: 0 auto var(--e-7);
+  max-width: 38rem;
+  font-size: var(--t-base);
+}
+
+/* Barra de búsqueda: en el celular cada parte va en su fila. */
+.buscador {
+  display: grid;
+  background: var(--c-blanco);
+  border-radius: var(--r-md);
+  box-shadow: var(--sombra-2);
+  text-align: left;
+  overflow: hidden;
+}
+
+.buscador label {
+  display: flex;
+  align-items: center;
+  gap: var(--e-2);
+  font-weight: 400;
+}
+
+.buscador input,
+.buscador select {
+  border: 0;
+  border-radius: 0;
+  min-height: 52px;
+  background: transparent;
+}
+
+.buscador input:focus-visible,
+.buscador select:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--c-acento);
+  border-radius: 0;
+}
+
+.buscador-ciudad {
+  padding-left: var(--e-4);
+  border-top: 1px solid var(--c-borde);
+  color: var(--c-acento);
+}
+
+.buscador-ciudad select {
+  color: var(--c-texto);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.buscador .boton {
+  border-radius: 0;
+  min-height: 52px;
+}
+
+.buscador .boton:focus-visible {
+  border-radius: 0;
+  box-shadow: inset 0 0 0 3px var(--c-blanco);
+}
+
+@media (min-width: 640px) {
+  .hero {
+    padding: var(--e-9) var(--e-4) calc(var(--e-9) + var(--e-6));
+  }
+
+  .buscador {
+    grid-template-columns: 1fr minmax(180px, 30%) auto;
+  }
+
+  .buscador-ciudad {
+    border-top: 0;
+    border-left: 1px solid var(--c-borde);
+  }
+
+  .buscador .boton {
+    padding-inline: var(--e-6);
+  }
+}
+
+/* ---------- Inicio: rejilla de eventos ---------- */
+
+.seccion-eventos {
+  padding-top: var(--e-7);
+}
+
+.seccion-cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--e-2) var(--e-4);
+  margin-bottom: var(--e-5);
+}
+
+.seccion-cabecera h2 {
+  font-size: var(--t-xl);
+  margin: 0;
+}
+
+.enlace-acento {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--e-2);
+  min-height: var(--toque-min);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--c-acento);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.enlace-acento:hover {
+  text-decoration: underline;
+}
+
+.enlace-acento .icono {
+  width: 1.25em;
+  height: 1.25em;
+}
+
+.rejilla-eventos {
+  display: grid;
+  gap: var(--e-4);
+}
+
+@media (min-width: 640px) {
+  .rejilla-eventos {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .rejilla-eventos {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.tarjeta-evento {
+  display: flex;
+  flex-direction: column;
+  background: var(--c-blanco);
+  border-radius: var(--r-md);
+  box-shadow: var(--sombra-1);
+  overflow: hidden;
+  color: var(--c-texto);
+  text-decoration: none;
+  transition:
+    box-shadow 0.15s,
+    transform 0.15s;
+}
+
+a.tarjeta-evento:hover {
+  box-shadow: var(--sombra-2);
+  transform: translateY(-2px);
+}
+
+a.tarjeta-evento:focus-visible {
+  border-radius: var(--r-md);
+}
+
+.tarjeta-evento-imagen {
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: flex-end;
+  padding: var(--e-4);
+  background-color: var(--c-gris-boton);
+  border-radius: 0;
+}
+
+.tarjeta-evento-imagen span {
+  color: var(--c-sobre-oscuro);
+  font-size: var(--t-lg);
+  font-weight: 800;
+  line-height: 1.15;
+  text-transform: uppercase;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 0.5);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tarjeta-evento-cuerpo {
+  padding: var(--e-4) var(--e-5) var(--e-5);
+}
+
+.tarjeta-evento h3 {
+  font-size: var(--t-base);
+  font-weight: 600;
+  margin: 0 0 var(--e-2);
+}
+
+.meta {
+  display: grid;
+  gap: var(--e-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--c-suave);
+  font-size: var(--t-sm);
+}
+
+.meta li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--e-2);
+}
+
+.meta .icono {
+  margin-top: 0.2em;
+  color: var(--c-texto);
 }
 
 /* ---------- Mapa de asientos (se rediseña en su propio commit) ---------- */
